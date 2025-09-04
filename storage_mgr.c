@@ -17,7 +17,10 @@ RC createPageFile(char *fileName) {
 }
 
 RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
-    // 
+    FILE *file = fopen(fileName, "rb+");
+    if (file == NULL) {
+        return RC_FILE_NOT_FOUND;
+    }
     return RC_OK;
 }
 
