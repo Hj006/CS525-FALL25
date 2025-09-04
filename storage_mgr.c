@@ -38,13 +38,17 @@ RC createPageFile(char *fileName) {
     }
     free(header);
     
-    // calloc page size buffer 
-    SM_PageHandle buffer = (SM_PageHandle) calloc(PAGE_SIZE, sizeof(char));
+    // malloc page size buffer 
     // if no enough page size buffer, the creating fail     
+    SM_PageHandle buffer = (SM_PageHandle) malloc(PAGE_SIZE);
     if (buffer == NULL) {
         fclose(file);
-        return RC_WRITE_FAILED;
+        return RC_WRITE_FAILED; 
     }
+    //TODO: write 0/ in file
+
+
+    
     // write file and free buffer
     size_t written = fwrite(buffer, sizeof(char), PAGE_SIZE, file);
     if (written != PAGE_SIZE) {
@@ -59,8 +63,27 @@ RC createPageFile(char *fileName) {
 }
 
 RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
+    //open file, if not found ,return RC_FILE_NOT_FOUND
     FILE *file = fopen(fileName, "rb+");
-
+    if (file == NULL) {
+        return RC_FILE_NOT_FOUND;
+    }
+    // malloc page size header
+    SM_PageHandle header = (SM_PageHandle) malloc(PAGE_SIZE);
+    if (header == NULL) {
+        fclose(file);
+        return RC_WRITE_FAILED; // malloc fail
+    }    
+    //get totalNumPages
+    int totalPages;
+    memcpy(&totalPages, header, sizeof(int)); // totalNumPages
+    free(header);  
+    // initial SM_FileHandle
+    fHandle->fileName = fileName;
+    fHandle->totalNumPages = totalPages;  // totalNumPages
+    fHandle->curPagePos = 0;       // Page 0 = header
+    fHandle->mgmtInfo = file;      //  FILE* pointer
+    
     return RC_OK;
 }
 
