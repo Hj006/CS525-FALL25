@@ -14,7 +14,12 @@ void initStorageManager(void) {
 RC createPageFile(char *fileName) {
     // write a new file
     FILE *file = fopen(fileName, "wb+");
-
+    // if failed on open a new file
+    if (file == NULL) {
+        printf("fopen failed: %s\n", strerror(errno));
+        return RC_FILE_NOT_FOUND;   
+    }
+    
     // calloc page size buffer 
     SM_PageHandle buffer = (SM_PageHandle) calloc(PAGE_SIZE, sizeof(char));
     // if no enough page size buffer, the creating fail     
