@@ -19,6 +19,24 @@ RC createPageFile(char *fileName) {
         printf("fopen failed: %s\n", strerror(errno));
         return RC_FILE_NOT_FOUND;   
     }
+
+    // header
+    SM_PageHandle header = (SM_PageHandle) calloc(PAGE_SIZE, sizeof(char));
+    if (header == NULL) {
+        fclose(file);
+        return RC_WRITE_FAILED;
+    }
+
+    // write totalNumPages in header
+    int totalPages = 1;
+    memcpy(header, &totalPages, sizeof(int)); 
+    // write header and free header
+    size_t headerWritten = fwrite(header, sizeof(char), PAGE_SIZE, file);
+    if (headerWritten != PAGE_SIZE) {
+        fclose(file);
+        return RC_WRITE_FAILED;
+    }
+    free(header);
     
     // calloc page size buffer 
     SM_PageHandle buffer = (SM_PageHandle) calloc(PAGE_SIZE, sizeof(char));
