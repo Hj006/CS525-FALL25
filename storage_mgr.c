@@ -12,7 +12,26 @@ void initStorageManager(void) {
 }
 
 RC createPageFile(char *fileName) {
-    // 
+    // write a new file
+    FILE *file = fopen(fileName, "wb+");
+
+    // calloc page size buffer 
+    SM_PageHandle buffer = (SM_PageHandle) calloc(PAGE_SIZE, sizeof(char));
+    // if no enough page size buffer, the creating fail     
+    if (buffer == NULL) {
+        fclose(file);
+        return RC_WRITE_FAILED;
+    }
+    // write file and free buffer
+    size_t written = fwrite(buffer, sizeof(char), PAGE_SIZE, file);
+    if (written != PAGE_SIZE) {
+        fclose(file);
+        return RC_WRITE_FAILED;
+    }
+    free(buffer);
+
+    // close the file
+    fclose(file);
     return RC_OK;
 }
 
