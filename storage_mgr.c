@@ -137,6 +137,7 @@ finally:
     return rc;
 }
 
+
 /* destroya file */
 RC destroyPageFile(char *fileName) {
 
@@ -148,19 +149,59 @@ RC destroyPageFile(char *fileName) {
     if (res == 0) {
         return RC_OK;
     } else {
-        return RC_FILE_NOT_FOUND; // destroy failure: file is not found, file is not removable
+        return RC_FILE_NOT_FOUND;       // destroy failure: file is not found, file is not removable
     }
 }
 
+
 /* reading blocks from disc */
 RC readBlock(int pageNum, SM_FileHandle *fHandle, SM_PageHandle memPage) {
-    // 
-    return RC_OK;
+    /*
+        The method reads the block at position pageNum from a file and stores its content in the memory pointed to by the memPage page handle.
+        If the file has less than pageNum pages, the method should return RC READ NON EXISTING PAGE
+        The physical offset is pageNum + 1 because we have a header page.
+    */
+
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+    if (pageNum < 0 || pageNum >= fHandle->totalNumPages) {
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+
+    // move the file pointer to the right physical location (skip the header block)
+    FILE *file = (FILE *) fHandle->mgmtInfo;
+    long offset = (pageNum + 1) * PAGE_SIZE;                // +1 because page 0 is the header
+    int successfulMove = fseek(file, offset, SEEK_SET);     // fseek() return 0 if the move worked
+
+    if (successfulMove == 0) { 
+        
+        // successfully, read the page content into memory
+        size_t bytesRead = fread(memPage, sizeof(char), PAGE_SIZE, file);
+        if (bytesRead != PAGE_SIZE) {
+            return RC_READ_NON_EXISTING_PAGE;
+        }
+        
+        // we already moved the file pointer with fseek,
+        // update the current page position in the file handle
+        fHandle->curPagePos = pageNum;    
+
+        return RC_OK;
+
+    } else {
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+
 }
 
 int getBlockPos(SM_FileHandle *fHandle) {
-    // 
-    return 0;
+
+    // return the current page position in a file
+    if (fHandle == NULL) {
+        return -1;          // file handle not initialized
+    }
+    
+    return fHandle->curPagePos;
 }
 
 RC readFirstBlock(SM_FileHandle *fHandle, SM_PageHandle memPage) {
