@@ -195,38 +195,77 @@ RC readBlock(int pageNum, SM_FileHandle *fHandle, SM_PageHandle memPage) {
 }
 
 int getBlockPos(SM_FileHandle *fHandle) {
-
     // return the current page position in a file
+
     if (fHandle == NULL) {
         return -1;          // file handle not initialized
     }
-    
+
     return fHandle->curPagePos;
 }
 
 RC readFirstBlock(SM_FileHandle *fHandle, SM_PageHandle memPage) {
-    // 
-    return RC_OK;
+    /*
+        Read the first page in a file
+    */ 
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+
+    // read the first data page of the file
+    return readBlock(0, fHandle, memPage);
 }
 
 RC readPreviousBlock(SM_FileHandle *fHandle, SM_PageHandle memPage) {
-    // 
-    return RC_OK;
+
+
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+
+    int target = fHandle->curPagePos - 1;   // previous boclk number = current block number -1
+    if (target < 0) {                       // there is no "previous" page to read
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+
+    return readBlock(target, fHandle, memPage);
+
 }
 
 RC readCurrentBlock(SM_FileHandle *fHandle, SM_PageHandle memPage) {
-    // 
-    return RC_OK;
+
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+
+    int target = fHandle->curPagePos;
+    return readBlock(target, fHandle, memPage);
+
 }
 
 RC readNextBlock(SM_FileHandle *fHandle, SM_PageHandle memPage) {
-    // 
-    return RC_OK;
+
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+
+    int target = fHandle->curPagePos + 1;
+    if (target >= fHandle->totalNumPages) {   // if the next page number goes beyond totalNumPages, it means we are already at the last page and there is no next page
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+
+    return readBlock(target, fHandle, memPage);
+
 }
 
 RC readLastBlock(SM_FileHandle *fHandle, SM_PageHandle memPage) {
-    // 
-    return RC_OK;
+
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+
+    int target = fHandle->totalNumPages - 1;    // page numbers start at 0, therefore we -1
+    return readBlock(target, fHandle, memPage);
 }
 
 /* writing blocks to a page file */
