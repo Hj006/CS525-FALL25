@@ -96,6 +96,13 @@ RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
         return RC_WRITE_FAILED; 
     } 
 
+    size_t readBytes = fread(header, sizeof(char), PAGE_SIZE, file);  // read a whole page (4096 bytes) of data from the file and put it into the header buffer
+    if (readBytes != PAGE_SIZE) {
+        free(header);
+        fclose(file);
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+
     int totalPages;
     // when initializing, we stored total number of pages in the first int of header;
     // now we read it back into totalPages
@@ -270,21 +277,121 @@ RC readLastBlock(SM_FileHandle *fHandle, SM_PageHandle memPage) {
 
 /* writing blocks to a page file */
 RC writeBlock(int pageNum, SM_FileHandle *fHandle, SM_PageHandle memPage) {
-    // 
-    return RC_OK;
+    /*
+        Write a page to disk using either the current position or an absolute position
+        write memPage data to file[pageNum]
+        On success, update curPagePos
+    */
+
+    // error checks: 
+    // file handle must be valid (not NULL) 
+    // pageNum must be within the range of existing pages
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+    if (pageNum < 0 || pageNum >= fHandle->totalNumPages) {
+        return RC_READ_NON_EXISTING_PAGE; 
+    }
+
+    FILE *file = (FILE *) fHandle->mgmtInfo;
+    long offset = (pageNum + 1) * PAGE_SIZE; // +1 to skip header
+    int successfulMove = fseek(file, offset, SEEK_SET);
+    
+    if ( successfulMove != 0) {
+
+        return RC_WRITE_FAILED;
+
+    } else{
+
+        // write one full page in a single fwrite call
+        size_t written = fwrite(memPage, sizeof(char), PAGE_SIZE, file);
+
+        if (written != PAGE_SIZE) {
+            return RC_WRITE_FAILED;
+        }
+
+        fflush(file);                        // flush buffer to disk
+        fHandle->curPagePos = pageNum;      // update current page position
+
+        return RC_OK;        
+    }
 }
 
 RC writeCurrentBlock(SM_FileHandle *fHandle, SM_PageHandle memPage) {
-    // 
+    
+    // error checks
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+
+    int current = fHandle->curPagePos;     // get the current page number from the file handle
+    RC result = writeBlock(current, fHandle, memPage);
+
+    if (result != RC_OK) {
+        return RC_WRITE_FAILED;
+    }
     return RC_OK;
 }
 
 RC appendEmptyBlock(SM_FileHandle *fHandle) {
-    // 
+
+    // error checks
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+
+    FILE *file = (FILE *) fHandle->mgmtInfo;
+
+    // allocate one page of memory initialized with zeros
+    SM_PageHandle emptyPage = (SM_PageHandle) calloc(PAGE_SIZE, sizeof(char));
+    if (emptyPage == NULL) {
+        return RC_WRITE_FAILED;
+    }
+
+    // move file pointer to the end of the file
+    int successfulMove = fseek(file, 0, SEEK_END);
+    if (successfulMove != 0) {
+        free(emptyPage);
+        return RC_WRITE_FAILED;
+    }
+
+    // write the empty page to the end of the file
+    size_t written = fwrite(emptyPage, sizeof(char), PAGE_SIZE, file);
+    free(emptyPage);
+
+    if (written != PAGE_SIZE) {
+        return RC_WRITE_FAILED;
+    }
+
+    fflush(file);                       // make sure data is flushed to disk
+    fHandle->totalNumPages += 1;        // update the total number of pages in the file
+
     return RC_OK;
 }
 
 RC ensureCapacity(int numberOfPages, SM_FileHandle *fHandle) {
-    // 
+
+    // error checks    
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        return RC_FILE_HANDLE_NOT_INIT;
+    }
+
+    while (fHandle->totalNumPages < numberOfPages) {
+        // keep appending empty pages until the file has at least numberOfPages pages
+        RC rc = appendEmptyBlock(fHandle);
+        if (rc != RC_OK) {
+            return rc; // if appending fails, return the error immediately
+        }
+    }
+
     return RC_OK;
 }
+
+/*
+
+    make
+    ./test_assign1_1
+
+    make clean
+
+ */
