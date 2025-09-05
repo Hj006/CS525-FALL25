@@ -10,116 +10,145 @@
 void initStorageManager(void) {
     // 
 }
+
+
 /* create a file */
 RC createPageFile(char *fileName) {
     // write a new file
     FILE *file = fopen(fileName, "wb+");
-    // if failed on open a new file
-    if (file == NULL) {
-        printf("fopen failed: %s\n", strerror(errno));
+
+    // failed to open file
+    if (file == NULL) { 
+        //printf("fopen failed: %s\n", strerror(errno));
         return RC_FILE_NOT_FOUND;   
     }
 
-    // header
-    SM_PageHandle header = (SM_PageHandle) calloc(PAGE_SIZE, sizeof(char));
+    // allocate a page-sized (4096) buffer for the header page
+    SM_PageHandle header = (SM_PageHandle) malloc(PAGE_SIZE);
     if (header == NULL) {
         fclose(file);
         return RC_WRITE_FAILED;
     }
 
-    // write totalNumPages in header
+    // initialize header with zero bytes
+    for (int i = 0; i < PAGE_SIZE; i++) {
+        header[i] = '\0';
+    }
+
+    // store total number of pages in header page
     int totalPages = 1;
     memcpy(header, &totalPages, sizeof(int)); 
-    // write header and free header
+    // header is like | 01 00 00 00 | 00 00 00 00 | ...all are 0... |
+
+    // write header page to the file
     size_t headerWritten = fwrite(header, sizeof(char), PAGE_SIZE, file);
+    free(header);
     if (headerWritten != PAGE_SIZE) {
         fclose(file);
         return RC_WRITE_FAILED;
     }
-    free(header);
     
-    // malloc page size buffer 
-    // if no enough page size buffer, the creating fail     
+    
+    // allocate one page-sized memory buffer for file operations
+    // if malloc fails (out of memory), close the file and return an error 
     SM_PageHandle buffer = (SM_PageHandle) malloc(PAGE_SIZE);
     if (buffer == NULL) {
         fclose(file);
         return RC_WRITE_FAILED; 
     }
-    //TODO: write 0/ in file
 
+    for (int i = 0; i < PAGE_SIZE; i += 2) {
+        buffer[i] = '\0';
+        if (i + 1 < PAGE_SIZE) buffer[i + 1] = '\0';
+    }
 
-    
-    // write file and free buffer
+    // write PAGE_SIZE bytes to the file
     size_t written = fwrite(buffer, sizeof(char), PAGE_SIZE, file);
+    free(buffer);
     if (written != PAGE_SIZE) {
         fclose(file);
         return RC_WRITE_FAILED;
     }
-    free(buffer);
-
+   
     // close the file
     fclose(file);
     return RC_OK;
 }
-/* open a file */
+
+
 RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
-    //open file, if not found ,return RC_FILE_NOT_FOUND
+    /* 
+        Open an existing page file. 
+        If the file does not exist, return "RC_FILE_NOT_FOUND".
+        The second input parameter is the file handle to be filled.
+        IF succeed, initialize all fields of the file handle with the file's info.   
+    */
     FILE *file = fopen(fileName, "rb+");
     if (file == NULL) {
         return RC_FILE_NOT_FOUND;
     }
-    // malloc page size header
+
+    // allocate a page for reading header page
     SM_PageHandle header = (SM_PageHandle) malloc(PAGE_SIZE);
     if (header == NULL) {
+        free(header);  
         fclose(file);
-        return RC_WRITE_FAILED; // malloc fail
-    }    
-    //get totalNumPages
+        return RC_WRITE_FAILED; 
+    } 
+
     int totalPages;
-    memcpy(&totalPages, header, sizeof(int)); // totalNumPages
-    free(header);  
+    // when initializing, we stored total number of pages in the first int of header;
+    // now we read it back into totalPages
+    memcpy(&totalPages, header, sizeof(int)); 
+    free(header);   
+
     // initial SM_FileHandle
     fHandle->fileName = fileName;
-    fHandle->totalNumPages = totalPages;  // totalNumPages
-    fHandle->curPagePos = 0;       // Page 0 = header
+    fHandle->totalNumPages = totalPages;
+    fHandle->curPagePos = 0;       //  Defualt is header page (number 0)
     fHandle->mgmtInfo = file;      //  FILE* pointer
     
     return RC_OK;
 }
+
+
 /* close a file */
 RC closePageFile(SM_FileHandle *fHandle) {
     RC rc = RC_OK;
-    // check if close a file before open it
+
+    // validate file handle: must not be NULL and must point to an open file
     if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
         rc = RC_FILE_HANDLE_NOT_INIT;
         goto finally;
     }
-    // close file
+
+    // close  the underlying FILE* 
     if (fclose((FILE *) fHandle->mgmtInfo) != 0) {
         rc = RC_WRITE_FAILED;
         goto finally;
     }
 
 finally:
-    // mgmtInfo = NULL no matter closing successfully
+    // avoid dangling pointers
     if (fHandle != NULL) {
         fHandle->mgmtInfo = NULL;
     }
+
     return rc;
 }
 
-/* remove a file */
+/* destroya file */
 RC destroyPageFile(char *fileName) {
-    //check if file found
+
     if (fileName == NULL) {
         return RC_FILE_NOT_FOUND; 
     }
-    // remove file
+    // destroy the file
     int res = remove(fileName);
     if (res == 0) {
         return RC_OK;
     } else {
-        return RC_FILE_NOT_FOUND; // remove failure: file is not closed, file is not found, file is not removable
+        return RC_FILE_NOT_FOUND; // destroy failure: file is not found, file is not removable
     }
 }
 
