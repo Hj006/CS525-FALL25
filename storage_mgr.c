@@ -110,9 +110,9 @@ finally:
 
 /* remove a file */
 RC destroyPageFile(char *fileName) {
-    //if file found
+    //check if file found
     if (fileName == NULL) {
-        return RC_FILE_NOT_FOUND; // 文件名无效
+        return RC_FILE_NOT_FOUND; 
     }
     // remove file
     int res = remove(fileName);
