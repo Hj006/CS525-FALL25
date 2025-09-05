@@ -88,9 +88,26 @@ RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
 }
 
 RC closePageFile(SM_FileHandle *fHandle) {
-    // 
-    return RC_OK;
+    RC rc = RC_OK;
+    // check if close a file before open it
+    if (fHandle == NULL || fHandle->mgmtInfo == NULL) {
+        rc = RC_FILE_HANDLE_NOT_INIT;
+        goto finally;
+    }
+    // close file
+    if (fclose((FILE *) fHandle->mgmtInfo) != 0) {
+        rc = RC_WRITE_FAILED;
+        goto finally;
+    }
+
+finally:
+    // mgmtInfo = NULL no matter closing successfully
+    if (fHandle != NULL) {
+        fHandle->mgmtInfo = NULL;
+    }
+    return rc;
 }
+
 
 RC destroyPageFile(char *fileName) {
     // 
