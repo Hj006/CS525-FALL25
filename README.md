@@ -133,7 +133,7 @@ make clean
 
 
 ## 5. Video Link
-Provide a link to the recorded demo video.
+[The link to the recorded demo video.](https://www.loom.com/share/70a06945834d4cce944e274a8c6ec885?sid=453fc0af-bc86-4eab-b260-0cb5e2de8707)
 
 
 ## 6. Contact Authors
