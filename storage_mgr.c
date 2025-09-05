@@ -10,7 +10,7 @@
 void initStorageManager(void) {
     // 
 }
-
+/* create a file */
 RC createPageFile(char *fileName) {
     // write a new file
     FILE *file = fopen(fileName, "wb+");
@@ -61,7 +61,7 @@ RC createPageFile(char *fileName) {
     fclose(file);
     return RC_OK;
 }
-
+/* open a file */
 RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
     //open file, if not found ,return RC_FILE_NOT_FOUND
     FILE *file = fopen(fileName, "rb+");
@@ -86,7 +86,7 @@ RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
     
     return RC_OK;
 }
-
+/* close a file */
 RC closePageFile(SM_FileHandle *fHandle) {
     RC rc = RC_OK;
     // check if close a file before open it
@@ -108,10 +108,19 @@ finally:
     return rc;
 }
 
-
+/* remove a file */
 RC destroyPageFile(char *fileName) {
-    // 
-    return RC_OK;
+    //if file found
+    if (fileName == NULL) {
+        return RC_FILE_NOT_FOUND; // 文件名无效
+    }
+    // remove file
+    int res = remove(fileName);
+    if (res == 0) {
+        return RC_OK;
+    } else {
+        return RC_FILE_NOT_FOUND; // remove failure: file is not closed, file is not found, file is not removable
+    }
 }
 
 /* reading blocks from disc */
