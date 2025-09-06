@@ -33,7 +33,60 @@ For this assignment, the main modifications were made to the following files:
 
 
 ## 2. Design and Implementation of Functions
-Explain the thought process and approach taken when implementing the storage manager functions.
+
+### Creating and Managing (Create, Open, Close, Destroy) 
+1. **createPageFile** : To create a brand new file, which includes one header page and one normal page.
+
+   First, fopen(fileName, "wb+") physically creates the file. The "wb+" means "write in binary mode." The w creates a new file, and the + allows us to read from it as well.
+
+   Next, we create the first page (page 0), which is a header page, storing information about the file itself, such as the total number of pages in the file (totalNumPages). We create a block of memory (malloc), write the total number of pages (which is 1) into it, and then write this header page to the file.
+
+   Then, we create another empty block of memory and write it to the file right after the header. Now our file has two pages: the header and the first data page. We have a fixed PAGE_SIZE, which means every page is the exact same size.
+   
+   Finally, we clean up by freeing any memory we used and closing the file.
+
+2. **openPageFile** : To open an existing file.
+
+   First, fopen(fileName, "rb+") opens the file. The "rb+" means "read in binary mode," and the + allows us to write later. If the file doesn't exist, fopen(fileName, "rb+") will fail.
+
+   Next, we read the first page (the header) from the file and get the totalNumPages that we stored there when we created the file, which is the total pages number the file have.
+
+   Finally, we set up our "file handle" (fHandle). These infomration can be access later: file name, the total number of pages, and the current under reading page number (default to hearder page number).
+
+3. **closePageFile** : To safely close the file. The dangling pointers are avoided.
+4. **destroyPageFile** : To delete the file from the computer entirely.
+
+### Reading (Read Functions)
+1. **readBlock** : To jump to a specific page number and read it
+
+   First, we check if the page number valid. Since page 0 is the header, the actual data for pageNum is at (pageNum + 1) * PAGE_SIZE.
+
+   Next, we use fseek() to jump the file's "read cursor" directly to that location and then use fread() to copy one page's data from the file into the memPage buffer.
+
+   Finally, we update our fHandle->curPagePos to remember that this is the page we last stopped.
+
+2. **readFirstBlock** : To get the first page number, and then call the **readBlock** function to do the work.
+3. **readPreviousBlock** : To get the current page number, minus 1, and then call the **readBlock** function to do the work. 
+4. **readNextBlock** : To get the current page number, add 1, and then call the **readBlock** function to do the work.
+5. **readLastBlock** : To get the totalNumPages, minus 1, and then call the **readBlock** function to do the work.
+
+### Writing (Write and Append Functions)
+1. **writeBlock** : It is the mirror image of readBlock. 
+   First, we check if the page number valid.
+   Next, we calculate the position using (pageNum + 1) * PAGE_SIZE, and then use fseek() to jump there. 
+   Finally, we use fwrite() to write the data to the file from the memPage buffer.
+
+2. **appendEmptyBlock** : To add a new page at the end of the file.
+
+   First, we create a completely empty page (filled with zeros) in memory.
+
+   Next, we use fseek(file, 0, SEEK_END) to jump to the end of the file.
+
+   Then, the new empty page is written there.
+
+   Finally, we increase the totalNumPages in the file handle by 1 and update the number in the header page also by 1.
+
+3. **ensureCapacity** : To check the current total pages and call appendEmptyBlock in a loop until the file is big enough.
 
 
 ## 3. How to Build and Run
@@ -139,9 +192,9 @@ make clean
 ## 6. Contact Authors
 
 * **Hongyi Jiang** (A20506636)
-* **Naicheng Wei** (Axxxxx)
+* **Naicheng Wei** (A20278475)
 
-If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)**
+If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)** **[lwei3@ghawk.illinoistech.edu](mailto:lwei3@ghawk.illinoistech.edu)**
 
 
 
