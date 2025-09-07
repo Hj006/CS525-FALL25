@@ -362,10 +362,41 @@ RC appendEmptyBlock(SM_FileHandle *fHandle) {
     if (written != PAGE_SIZE) {
         return RC_WRITE_FAILED;
     }
-
-    fflush(file);                       // make sure data is flushed to disk
+                  
     fHandle->totalNumPages += 1;        // update the total number of pages in the file
 
+    // remaining part is to update the total page number in header page
+    if (fseek(file, 0, SEEK_SET) != 0) return RC_WRITE_FAILED;
+    SM_PageHandle header = (SM_PageHandle) malloc(PAGE_SIZE);
+    if (header == NULL) return RC_WRITE_FAILED;
+
+    size_t readBytes = fread(header, sizeof(char), PAGE_SIZE, file);
+    if (readBytes != PAGE_SIZE) {
+        free(header);
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+
+    // check consistency
+    int headerTotalPages;
+    memcpy(&headerTotalPages, header, sizeof(int));
+    if (headerTotalPages != fHandle->totalNumPages - 1) {
+        free(header);
+        return RC_WRITE_FAILED; // inconsistent state
+    }
+
+    // update header totalPages
+    memcpy(header, &fHandle->totalNumPages, sizeof(int));
+
+    // write header back to page 0
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        free(header);
+        return RC_WRITE_FAILED;
+    }
+    size_t headerWritten = fwrite(header, sizeof(char), PAGE_SIZE, file);
+    free(header);
+    if (headerWritten != PAGE_SIZE) return RC_WRITE_FAILED;
+
+    fflush(file);                  // make sure data is flushed to disk
     return RC_OK;
 }
 
