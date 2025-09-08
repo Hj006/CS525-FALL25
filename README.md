@@ -93,12 +93,11 @@ For this assignment, the main modifications were made to the following files:
 
 ### Prerequisites
 - **Linux / macOS**  
-  Requires `gcc` and `make` (these are usually pre-installed or can be installed easily with package managers such as `apt`, `brew`, or `yum`).
+  Requires `gcc` and `make` (these are usually pre-installed or can be installed easily with package managers such as `apt` or `yum`).
 
 - **Windows**  
   In our setup, we use **WSL (Windows Subsystem for Linux)** with Ubuntu as the development environment.  
   This allows us to run `gcc` and `make` just like on Linux.  
-  Other options such as **MinGW** or **Cygwin** are possible, but we recommend WSL for consistency and ease of use.  
 
   Example of using WSL and running `make` inside WSL:  
   ![Make Build Example](images/make_build.png)  
