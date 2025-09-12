@@ -7,14 +7,79 @@
 #include <string.h>
 
 
+// Frame represents one page frame in the buffer pool
+typedef struct Frame {
+    PageNumber pageNum;   // current page number; if NO_PAGE, it's empty.
+    char *data;           // pointer to the actual data
+    bool dirty;           // dirty flag
+    int fixCount;         // how many clients are using this page
+    int ref;              // used for replacement strategies (e.g., LRU counter)
+} Frame;
+
+// PoolMgmtData stores various information required for the entire buffer pool to be maintained during runtime
+typedef struct PoolMgmtData {
+    Frame *frames;        // point to array of frames
+    int numReadIO;        // number of pages read from disk
+    int numWriteIO;       // number of pages written to disk
+    int nextVictim;       // index used for FIFO replacement
+    void *strategyData;   // store stratData, which will be used in LRU-K 
+} PoolMgmtData;
 
 /*Buffer Manager Interface - Pool Handling*/ 
 
-
-// Initialize a buffer pool
 RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName, 
                   const int numPages, ReplacementStrategy strategy,
                   void *stratData) {
+    /*
+      Initialize a buffer pool for an existing page file.
+
+      Allocate memory for PoolMgmtData and attach it to bm->mgmtData.
+      Allocate an array of frames (numPages size).
+      Initialize each frame:
+          - pageNum = NO_PAGE (means empty)
+          - allocate memory for data
+          - dirty = false
+          - fixCount = 0
+          - ref = 0 (for replacement strategies later)
+      Initialize counters: numReadIO = 0, numWriteIO = 0, nextVictim = 0.
+      Set bm->pageFile, bm->numPages, bm->strategy.
+
+     */
+
+    // allocate memory for management data
+    PoolMgmtData *mgmt = (PoolMgmtData *) malloc(sizeof(PoolMgmtData));
+    if (mgmt == NULL) {
+        return RC_WRITE_FAILED;     // failed
+    }
+
+    // allocate frames
+    mgmt->frames = (Frame *) malloc(sizeof(Frame) * numPages);
+    if (mgmt->frames == NULL) { // allocate failed, to aviod leaky, we release mgmt and return error 
+        free(mgmt);
+        return RC_WRITE_FAILED;
+    }
+
+    // initialize frames
+    for (int i = 0; i < numPages; i++) {
+        mgmt->frames[i].pageNum = NO_PAGE;
+        mgmt->frames[i].data = (char *) malloc(PAGE_SIZE);
+        mgmt->frames[i].dirty = false;
+        mgmt->frames[i].fixCount = 0;
+        mgmt->frames[i].ref = 0; // counter for LRU
+    }
+
+    // initialize counters
+    mgmt->numReadIO = 0;
+    mgmt->numWriteIO = 0;
+    mgmt->nextVictim = 0; // FIFO pointer
+    mgmt->strategyData = stratData;
+
+    // attach the pointer
+    bm->pageFile = (char *) pageFileName;   // file name
+    bm->numPages = numPages;                // number of frames
+    bm->strategy = strategy;                // replacement strategy
+    bm->mgmtData = mgmt;                    // management data
+
     return RC_OK;
 }
 
