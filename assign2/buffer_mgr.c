@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define RC_PINNED_PAGES_IN_BUFFER 400
 
 // Frame represents one page frame in the buffer pool
 typedef struct Frame {
@@ -41,7 +42,7 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
           - dirty = false
           - fixCount = 0
           - ref = 0 (for replacement strategies later)
-      Initialize counters: numReadIO = 0, numWriteIO = 0, nextVictim = 0.
+      Initialize counters.
       Set bm->pageFile, bm->numPages, bm->strategy.
 
      */
@@ -85,11 +86,97 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
 
 // Shut down a buffer pool and free all resources
 RC shutdownBufferPool(BM_BufferPool *const bm) {
+    /*
+      Safely close unused buffer pools
+      Check pinned pages. If there are still pages pinned (fixCount > 0), it means someone is still using these pages, which means there is an error
+      Write all dirty pages back to disk
+      Release all memory
+      Clean up BM_BufferPool
+    */
+
+    // get the management data structure 
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+
+    // check if there are still pinned pages
+    for (int i = 0; i < bm->numPages; i++) {
+        if (mgmt->frames[i].fixCount > 0) {
+            // pinned pages can't be  closed, return error 
+            return RC_PINNED_PAGES_IN_BUFFER;
+        }
+    }
+
+    //  flush all dirty pages back to disk 
+    SM_FileHandle fh;
+    RC rc = openPageFile(bm->pageFile, &fh); 
+    if (rc != RC_OK) {
+        return rc;
+    }
+
+    for (int i = 0; i < bm->numPages; i++) {
+        if (mgmt->frames[i].dirty == true) {
+            // write the dirty page back to the page file
+            writeBlock(mgmt->frames[i].pageNum, &fh, mgmt->frames[i].data);
+            mgmt->numWriteIO++;
+            mgmt->frames[i].dirty = false; 
+        }
+    }
+
+    closePageFile(&fh);
+
+    //  free all allocated memory
+    for (int i = 0; i < bm->numPages; i++) {
+        free(mgmt->frames[i].data);  // relese the data in the  frame
+    }
+    free(mgmt->frames);   // release frames 
+    free(mgmt);           // release the management data
+
+    //  clean up the buffer pool struct 
+    bm->mgmtData = NULL;
+    bm->pageFile = NULL;
+    bm->numPages = 0;
+    bm->mgmtData = NULL;
+
+
     return RC_OK;
 }
 
-// Force all dirty pages (with fix count = 0) to be written back to disk
 RC forceFlushPool(BM_BufferPool *const bm) {
+    /*
+
+      look through all frames in the buffer pool
+      for every frame that is dirty and not pinned (fixCount == 0),
+      writes the page back to disk, increments the write I/O counter and resets the dirty flag
+
+    */
+
+    // get the management structure
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+
+    // for loop all the frame
+    for (int i = 0; i < bm->numPages; i++) {
+        Frame *frame = &mgmt->frames[i];
+
+        if (frame->pageNum != NO_PAGE){
+            // for the dirty and unpinned frame
+            if ( frame->dirty && frame->fixCount == 0) {
+                
+                // wirte back using writeBlock
+                RC rc = writeBlock(frame->pageNum, (SM_FileHandle *) bm->mgmtData, frame->data);
+
+                if (rc != RC_OK) {
+                    return RC_WRITE_FAILED; 
+                }
+
+                // update I/O counter 
+                mgmt->numWriteIO++;
+
+                // clear the dirty flag
+                frame->dirty = false;
+            }
+        }
+
+    }
+
     return RC_OK;
 }
 
