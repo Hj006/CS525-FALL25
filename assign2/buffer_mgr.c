@@ -353,21 +353,28 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             }
 
             case RS_CLOCK: {
+                int startPoint = mgmt->clockHand;
                 while (true) {
                     // check the frame pointed by clockHand
                     if (mgmt->frames[mgmt->clockHand].fixCount == 0) {
                         if (mgmt->frames[mgmt->clockHand].ref == 1) {
-                            // if the current ref is 1, change it to 0
+                            // if the current reference bit is 1, change it to 0
                             mgmt->frames[mgmt->clockHand].ref = 0;
                         } else {
-                            // if the current ref is 0，this is the victim
+                            // if the current reference bit is 0，this is the victim
                             victim = mgmt->clockHand;
                             mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
                             break; // victim found, while end here
                         }
                     }
-                    // victim not found yet, clockHand move to check next potential victim
+                    // victim not found yet, clockHand move to check next frame
                     mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
+
+                    // After checking the entire buffer and no un-pinned page found 
+                    if (mgmt->clockHand == startPoint && !found) {
+                         // Stop to break infinite loop if all pages are pinned
+                         return RC_PINNED_PAGES_IN_BUFFER;
+                    }                    
                 }
                 break;
             }
@@ -413,6 +420,9 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
     if (bm->strategy == RS_LRU) { // LRU strategy, count and see the time node of the call
         mgmt->frames[victim].ref = globalLRUCounter++;
     }
+    if (bm->strategy == RS_CLOCK) { // CLOCK strategy
+        mgmt->frames[victim].ref = 1; // New page starts with reference bit 1
+    }    
     // update PageHandle
     page->pageNum = pageNum;
     page->data = mgmt->frames[victim].data;
