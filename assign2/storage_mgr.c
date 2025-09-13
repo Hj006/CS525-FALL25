@@ -91,7 +91,6 @@ RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
     // allocate a page for reading header page
     SM_PageHandle header = (SM_PageHandle) malloc(PAGE_SIZE);
     if (header == NULL) {
-        free(header);  
         fclose(file);
         return RC_WRITE_FAILED; 
     } 
