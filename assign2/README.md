@@ -38,37 +38,38 @@ For this assignment, the main modifications were made to the following files:
 ## 2. Design and Implementation of Functions
 
 ### Pool Handling (init, shutdown, flush) 
-1. **initBufferPool** : 
+1. **initBufferPool** : To create a new buffer pool in memory, which includes a specified number of page frames.
+First, it allocates memory for a `PoolMgmtData` struct, which holds all keeping information for the pool.
+Next, it allocates an array of `Frame` structs, one for each page frame in the pool. Each frame is initialized with default values: `pageNum` is set to `NO_PAGE`, `dirty` is `false`, `fixCount` is 0, and memory is allocated for the page data itself.
+Finally, it sets up the `BM_BufferPool` handle passed by the page file name, number of pages, and chosen replacement strategy.
 
+2. **shutdownBufferPool** : To safely destroy the buffer pool and free resources.
+First, it checks if no pages are currently pinned. If any page is still in use, it returns an error.
+Next, it writes dirty pages back to the disk file. This is similar to calling `forceFlushPool`.
+Finally, it frees all allocated memory, including the data buffer for each frame, the array of frames, and the `PoolMgmtData` struct itself.
 
-
-2. **shutdownBufferPool** : 
-
-
-
-3. **forceFlushPool** : 
-
+3. **forceFlushPool** : To write all dirty pages from the buffer pool to disk. It iterates through all frames and writes the content back to the page file for any frame that is dirty and not pinned.
 
 ### Page Access (pin, unpin, mark, force)
-1. **pinPage** : 
+1. **pinPage** : To request a page from the page file and "pin" it in a frame in memory.
+First, it checks if the requested page is already present in one of the frames.
+- If yes, it increments that frame's `fixCount` and returns a pointer to its data. For LRU, it also updates a timestamp to mark it as recently used.
+- If no, it selects a frame to replace. The selection is based on the pool's replacement strategy, FIFO or LRU. The frames can only be replaced when their `fixCount` is 0.
+Next, if the chosen frame contains a dirty page, its content will be written to disk before it is replaced.
+Then, it reads the requested page from the disk file into the chosen frame's data buffer.
+Finally, it updates the frame's metadata: `pageNum` is set to the new page's number, `fixCount` is set to 1, and the `dirty` flag is cleared.
 
-
-2. **unpinPage** : 
-3. **markDirty** :  
-4. **forcePage** : 
+2. **unpinPage** : To notify the buffer manager that the usage is finished with a page. It finds the corresponding frame and decrements its `fixCount` by one.
+3. **markDirty** :  To mark a page in the buffer as having been modified. It finds the corresponding frame and sets its `dirty flag` to true. 
+4. **forcePage** : To write the current content of a specific page back to the disk.
 
 
 ### Statistics (get functions)
-1. **getFrameContents** : 
-
-
-2. **getDirtyFlags** : 
-
-
-
-3. **getFixCounts** :
-4. **getNumReadIO** :
-5. **getNumWriteIO** :
+1. **getFrameContents** : To get an array of page numbers representing the content of the buffer pool. It returns an array where the i-th element is the page number stored in the i-th frame.
+2. **getDirtyFlags** : To get an array of booleans. The i-th element is true if the page in the i-th frame is dirty.
+3. **getFixCounts** : To get an array of integers. The i-th element is the `fixCount` of the page in the i-th frame.
+4. **getNumReadIO** : To get the total number of pages read from disk.
+5. **getNumWriteIO** : To get the total number of pages written to disk.
 
 
 ## 3. How to Build and Run
@@ -177,5 +178,6 @@ make clean
 * **Naicheng Wei** (A20278475)
 
 If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)** **[lwei3@ghawk.illinoistech.edu](mailto:lwei3@ghawk.illinoistech.edu)**
+
 
 
