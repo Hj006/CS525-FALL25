@@ -136,12 +136,16 @@ Finally, it updates the frame's metadata: `pageNum` is set to the new page's num
 
    This compiles the source files and generates the executable **`test_assign2_1`** and **`test_assign2_2`**.
 
-4. Run the program after building:
-
+### Run Tests:
+Builds the project and immediately executes the test cases.
+1. Run the main test case (FIFO and LRU):
    ```bash
-   ./test_assign2_1
+   make run1
    ```
-
+2. Run the second test case (for optional strategies):
+   ```bash
+   make run2
+   ```
 ### Additional Targets
 
 1. **Clean build files**
@@ -151,17 +155,6 @@ Finally, it updates the frame's metadata: `pageNum` is set to the new page's num
   ```
 
   Removes all `.o` files and the compiled binary.
-
-2. **Compile and run in one step**
-
-  ```bash
-  make run
-  ```
-
-  Builds the project and immediately executes the primary test case. ******TODO Makefile to define which test make run executes TODO******
-
-
-
 
 ## 4. Demonstration of Execution
 
@@ -185,10 +178,14 @@ make
 
 
 
-### Step 3: Execute the test program
+### Step 3: Execute the test programs using the run targets
 
 ```bash
-./test_assign2_1
+# Run the first test
+make run1
+
+# Run the second test
+make run2
 ```
 
 
@@ -214,6 +211,7 @@ make clean
 * **Naicheng Wei** (A20278475)
 
 If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)** **[lwei3@ghawk.illinoistech.edu](mailto:lwei3@ghawk.illinoistech.edu)**
+
 
 
 
