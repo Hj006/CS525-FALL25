@@ -217,11 +217,13 @@ RC unpinPage (BM_BufferPool *const bm, BM_PageHandle *const page) {
     
     // total number of frame
     int i = bm->numPages - 1;
-
+    
     while (i >= 0) {
         if (mgmt->frames[i].pageNum == page->pageNum) {
             if (mgmt->frames[i].fixCount > 0) {
+                //printf("Unpin page %d at frame %d, fixCount before: %d\n", page->pageNum, i, mgmt->frames[i].fixCount);
                 mgmt->frames[i].fixCount--;
+                //printf("Unpin page %d at frame %d, fixCount after: %d\n", page->pageNum, i, mgmt->frames[i].fixCount);
                 return RC_OK;
             }
         }
@@ -291,10 +293,28 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             RS_LFU = 3,
             RS_LRU_K = 4  
         */
-        case RS_FIFO:
-            victim = mgmt->nextVictim;
-            mgmt->nextVictim = (victim + 1) % bm->numPages;
+        case RS_FIFO: {
+            int start = mgmt->nextVictim;
+            int found = 0;
+
+            // for loop all frame，find a victim whose fixCount == 0 
+            for (int j = 0; j < bm->numPages; j++) {
+                int idx = (start + j) % bm->numPages;
+
+                if (mgmt->frames[idx].fixCount == 0) {
+                    victim = idx;
+                    mgmt->nextVictim = (idx + 1) % bm->numPages; // update next victim pointer
+                    found = 1;
+                    break;
+                }
+            }
+
+            if (!found) {
+                return RC_PINNED_PAGES_IN_BUFFER; // all frame is pinned
+            }
             break;
+        }
+
 
         case RS_LRU:{
 
@@ -341,9 +361,18 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
         closePageFile(&fh);
     }
 
-    // read new page into victim frame
+    //  ensure file has enough pages before reading 
     SM_FileHandle fh;
     openPageFile(bm->pageFile, &fh);
+    if (pageNum >= fh.totalNumPages) {
+        RC rc = ensureCapacity(pageNum + 1, &fh);
+        if (rc != RC_OK) {
+            closePageFile(&fh);
+            return rc;
+        }
+    }
+    
+    // read new page into victim frame
     RC rc = readBlock(pageNum, &fh, mgmt->frames[victim].data);
     closePageFile(&fh);
     if (rc != RC_OK) return rc;
@@ -353,7 +382,7 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
     mgmt->frames[victim].dirty = false;
     mgmt->frames[victim].fixCount = 1;
     if (bm->strategy == RS_LRU) { // LRU strategy, count and see the time node of the call
-        mgmt->frames[i].ref = globalLRUCounter++;
+        mgmt->frames[victim].ref = globalLRUCounter++;
     }
     // update PageHandle
     page->pageNum = pageNum;
