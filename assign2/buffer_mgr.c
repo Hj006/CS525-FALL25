@@ -16,7 +16,8 @@ typedef struct Frame {
     char *data;           // pointer to the actual data
     bool dirty;           // dirty flag
     int fixCount;         // how many clients are using this page
-    int ref;              // used for replacement strategies (e.g., LRU counter)
+    int ref;              // used for LRU counter
+    int refBit;           // used for CLOCK
 } Frame;
 
 // PoolMgmtData stores various information required for the entire buffer pool to be maintained during runtime
@@ -26,7 +27,7 @@ typedef struct PoolMgmtData {
     int numWriteIO;       // number of pages written to disk
     int nextVictim;       // index used for FIFO replacement
     int clockHand;        // index used for CLOCK replacement
-    void *strategyData;   // store stratData, which will be used in LRU-K 
+    void *strategyData;   // store stratData
 } PoolMgmtData;
 
 /*Pool Handling*/ 
@@ -69,6 +70,7 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
         mgmt->frames[i].dirty = false;
         mgmt->frames[i].fixCount = 0;
         mgmt->frames[i].ref = 0; // counter for LRU
+        mgmt->frames[i].refBit = 0;  
     }
 
     // initialize counters
@@ -278,8 +280,8 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             if (bm->strategy == RS_LRU) { // LRU strategy, count and see the time node of the call
                 mgmt->frames[i].ref = globalLRUCounter++;
             }
-            if (bm->strategy == RS_CLOCK) { // CLOCK strategy, when a page is pinned, the ref should always be 1
-                mgmt->frames[i].ref = 1; // Set reference bit
+            else if (bm->strategy == RS_CLOCK) { // CLOCK strategy, when a page is pinned, the ref should always be 1
+                mgmt->frames[i].refBit = 1; // Set reference bit
             }
             return RC_OK;
         }
@@ -353,29 +355,33 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             }
 
             case RS_CLOCK: {
-                int startPoint = mgmt->clockHand;
-                while (true) {
-                    // check the frame pointed by clockHand
-                    if (mgmt->frames[mgmt->clockHand].fixCount == 0) {
-                        if (mgmt->frames[mgmt->clockHand].ref == 1) {
-                            // if the current reference bit is 1, change it to 0
-                            mgmt->frames[mgmt->clockHand].ref = 0;
-                        } else {
-                            // if the current reference bit is 0，this is the victim
+                int scanned = 0; // indicates how many pages have been scanned
+                int total = bm->numPages;
+                while (scanned < total) {
+                    Frame *candidate = &mgmt->frames[mgmt->clockHand];
+
+                    if (candidate->fixCount == 0) {
+                        if (candidate->refBit == 0) {
+                            // the case we find victim
                             victim = mgmt->clockHand;
                             mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
-                            break; // victim found, while end here
+                            break;
+                        } else {
+                            // one more chance
+                            candidate->refBit = 0;
                         }
                     }
-                    // victim not found yet, clockHand move to check next frame
-                    mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
 
-                    // After checking the entire buffer and no un-pinned page found 
-                    if (mgmt->clockHand == startPoint && !found) {
-                         // Stop to break infinite loop if all pages are pinned
-                         return RC_PINNED_PAGES_IN_BUFFER;
-                    }                    
+                    // take one step clockwise
+                    mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
+                    scanned++;
                 }
+
+                // searched all but couldn't find victim
+                if (scanned == total) {
+                    return RC_PINNED_PAGES_IN_BUFFER;
+                }
+
                 break;
             }
             case RS_LFU:
@@ -421,7 +427,7 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
         mgmt->frames[victim].ref = globalLRUCounter++;
     }
     if (bm->strategy == RS_CLOCK) { // CLOCK strategy
-        mgmt->frames[victim].ref = 1; // New page starts with reference bit 1
+        mgmt->frames[i].refBit = 1; // New page starts with reference bit 1
     }    
     // update PageHandle
     page->pageNum = pageNum;
