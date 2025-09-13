@@ -285,73 +285,83 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
 
     // if page not in buffer, choose a victim frame
     int victim = -1;
-    switch (bm->strategy) {
-        /*
-        	RS_FIFO = 0,
-            RS_LRU = 1,
-            RS_CLOCK = 2,
-            RS_LFU = 3,
-            RS_LRU_K = 4  
-        */
-        case RS_FIFO: {
-            int start = mgmt->nextVictim;
-            int found = 0;
 
-            // for loop all frame，find a victim whose fixCount == 0 
-            for (int j = 0; j < bm->numPages; j++) {
-                int idx = (start + j) % bm->numPages;
-
-                if (mgmt->frames[idx].fixCount == 0) {
-                    victim = idx;
-                    mgmt->nextVictim = (idx + 1) % bm->numPages; // update next victim pointer
-                    found = 1;
-                    break;
-                }
-            }
-
-            if (!found) {
-                return RC_PINNED_PAGES_IN_BUFFER; // all frame is pinned
-            }
+    // prioritize finding empty frames
+    for (int j = 0; j < bm->numPages; j++) {
+        if (mgmt->frames[j].pageNum == NO_PAGE) {
+            victim = j;
             break;
         }
-
-
-        case RS_LRU:{
-
-            int victimIndex = -1;
-            int minRef = __INT_MAX__;
-
-            int i = 0;
-            while (i < bm->numPages) {
-                if (mgmt->frames[i].fixCount == 0) { // if the page is pinned, we can't repalce it 
-                    if (mgmt->frames[i].ref < minRef) { // find the least resntly used
-                        minRef = mgmt->frames[i].ref;
-                        victimIndex = i;
-                    }
-                }
-                i++;
-            }
-
-            if (victimIndex == -1) {
-                return RC_PINNED_PAGES_IN_BUFFER;  // failed to find 
-            }
-            victim = victimIndex;
-            break;
-        }
-
-        case RS_CLOCK:
-            //victim = 
-            break;
-        case RS_LFU:
-            //victim = 
-            break;
-        case RS_LRU_K:
-            //victim = 
-            break;
-        default:
-            return RC_WRITE_FAILED;  // the strategy is not involved
     }
 
+    if (victim == -1) {
+        switch (bm->strategy) {
+            /*
+                RS_FIFO = 0,
+                RS_LRU = 1,
+                RS_CLOCK = 2,
+                RS_LFU = 3,
+                RS_LRU_K = 4  
+            */
+            case RS_FIFO: {
+                int start = mgmt->nextVictim;
+                int found = 0;
+
+                // for loop all frame，find a victim whose fixCount == 0 
+                for (int j = 0; j < bm->numPages; j++) {
+                    int idx = (start + j) % bm->numPages;
+
+                    if (mgmt->frames[idx].fixCount == 0) {
+                        victim = idx;
+                        mgmt->nextVictim = (idx + 1) % bm->numPages; // update next victim pointer
+                        found = 1;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    return RC_PINNED_PAGES_IN_BUFFER; // all frame is pinned
+                }
+                break;
+            }
+
+
+            case RS_LRU:{
+
+                int victimIndex = -1;
+                int minRef = __INT_MAX__;
+
+                int i = 0;
+                while (i < bm->numPages) {
+                    if (mgmt->frames[i].fixCount == 0) { // if the page is pinned, we can't repalce it 
+                        if (mgmt->frames[i].ref < minRef) { // find the least resntly used
+                            minRef = mgmt->frames[i].ref;
+                            victimIndex = i;
+                        }
+                    }
+                    i++;
+                }
+
+                if (victimIndex == -1) {
+                    return RC_PINNED_PAGES_IN_BUFFER;  // failed to find 
+                }
+                victim = victimIndex;
+                break;
+            }
+
+            case RS_CLOCK:
+                //victim = 
+                break;
+            case RS_LFU:
+                //victim = 
+                break;
+            case RS_LRU_K:
+                //victim = 
+                break;
+            default:
+                return RC_WRITE_FAILED;  // the strategy is not involved
+        }
+    }
     // dirty pages modified by users need to be written back to disk
     if (mgmt->frames[victim].dirty == true) {
         SM_FileHandle fh;
