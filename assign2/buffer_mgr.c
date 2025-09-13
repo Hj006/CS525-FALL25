@@ -26,7 +26,7 @@ typedef struct PoolMgmtData {
     void *strategyData;   // store stratData, which will be used in LRU-K 
 } PoolMgmtData;
 
-/*Buffer Manager Interface - Pool Handling*/ 
+/*Pool Handling*/ 
 
 RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName, 
                   const int numPages, ReplacementStrategy strategy,
@@ -44,7 +44,6 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
           - ref = 0 (for replacement strategies later)
       Initialize counters.
       Set bm->pageFile, bm->numPages, bm->strategy.
-
      */
 
     // allocate memory for management data
@@ -142,11 +141,9 @@ RC shutdownBufferPool(BM_BufferPool *const bm) {
 
 RC forceFlushPool(BM_BufferPool *const bm) {
     /*
-
       look through all frames in the buffer pool
       for every frame that is dirty and not pinned (fixCount == 0),
       writes the page back to disk, increments the write I/O counter and resets the dirty flag
-
     */
 
     // get the management structure
@@ -180,26 +177,175 @@ RC forceFlushPool(BM_BufferPool *const bm) {
     return RC_OK;
 }
 
-/* Buffer Manager Interface - Page Access*/
+/*Page Access*/
 
 // Mark a page as dirty
 RC markDirty (BM_BufferPool *const bm, BM_PageHandle *const page) {
-    return RC_OK;
+
+    // get the management structure
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+
+    // total number of frame
+    int i = bm->numPages - 1;
+
+    while (i >= 0) {
+        if (mgmt->frames[i].pageNum == page->pageNum) {
+            mgmt->frames[i].dirty = true;   // found the target page then mark it as dirty
+            return RC_OK;
+        }
+        i--;  
+    }
+
+    // did not find return error
+    return RC_READ_NON_EXISTING_PAGE;
 }
 
-// Unpin a page (decrement its fix count)
 RC unpinPage (BM_BufferPool *const bm, BM_PageHandle *const page) {
-    return RC_OK;
+    /*
+      each time a page is unpinned, the "fixCount" of the page is reduced by 1, 
+      indicating that a user/process is no longer using it.
+    */
+
+    // get the management structure
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+    
+    // total number of frame
+    int i = bm->numPages - 1;
+
+    while (i >= 0) {
+        if (mgmt->frames[i].pageNum == page->pageNum) {
+            if (mgmt->frames[i].fixCount > 0) {
+                mgmt->frames[i].fixCount--;
+                return RC_OK;
+            }
+        }
+        i--;
+    }
+
+    return RC_READ_NON_EXISTING_PAGE;
 }
 
-// Force a specific page to be written back to disk
 RC forcePage (BM_BufferPool *const bm, BM_PageHandle *const page) {
-    return RC_OK;
+    /*
+      forces a specific page to be written back to disk
+      updates the numWriteIO
+    */
+
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+    SM_FileHandle fh;
+    RC rc = openPageFile(bm->pageFile, &fh);
+    if (rc != RC_OK) return rc;
+
+    int i = bm->numPages - 1;
+    while (i >= 0) {
+        if (mgmt->frames[i].pageNum == page->pageNum) {
+            // write back to the disk
+            writeBlock(page->pageNum, &fh, mgmt->frames[i].data);
+            mgmt->numWriteIO++;
+            mgmt->frames[i].dirty = false;
+            closePageFile(&fh);
+            return RC_OK;
+        }
+        i--;
+    }
+
+    closePageFile(&fh);
+    return RC_READ_NON_EXISTING_PAGE; 
 }
 
 // Pin a page into the buffer pool
 RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page, 
             const PageNumber pageNum) {
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+
+    //if page is already in buffer
+    int i = bm->numPages - 1;   
+    while (i >= 0) {
+        if (mgmt->frames[i].pageNum == pageNum) {
+            mgmt->frames[i].fixCount++;
+            page->pageNum = pageNum;
+            page->data = mgmt->frames[i].data;
+            return RC_OK;
+        }
+        i--; 
+    }
+
+    // if page not in buffer, choose a victim frame
+    int victim = -1;
+    switch (bm->strategy) {
+        /*
+        	RS_FIFO = 0,
+            RS_LRU = 1,
+            RS_CLOCK = 2,
+            RS_LFU = 3,
+            RS_LRU_K = 4  
+        */
+        case RS_FIFO:
+            victim = mgmt->nextVictim;
+            mgmt->nextVictim = (victim + 1) % bm->numPages;
+            break;
+
+        case RS_LRU:{
+
+            int victimIndex = -1;
+            int minRef = __INT_MAX__;
+
+            int i = 0;
+            while (i < bm->numPages) {
+                if (mgmt->frames[i].fixCount == 0) { // if the page is pinned, we can't repalce it 
+                    if (mgmt->frames[i].ref < minRef) { // find the least resntly used
+                        minRef = mgmt->frames[i].ref;
+                        victimIndex = i;
+                    }
+                }
+                i++;
+            }
+
+            if (victimIndex == -1) {
+                return RC_PINNED_PAGES_IN_BUFFER;  // failed to find 
+            }
+            victim = victimIndex;
+            break;
+        }
+
+        case RS_CLOCK:
+            //victim = 
+            break;
+        case RS_LFU:
+            //victim = 
+            break;
+        case RS_LRU_K:
+            //victim = 
+            break;
+        default:
+            return RC_WRITE_FAILED;  // the strategy is not involved
+    }
+
+    // dirty pages modified by users need to be written back to disk
+    if (mgmt->frames[victim].dirty == true) {
+        SM_FileHandle fh;
+        openPageFile(bm->pageFile, &fh);
+        writeBlock(mgmt->frames[victim].pageNum, &fh, mgmt->frames[victim].data);
+        mgmt->numWriteIO++;
+        closePageFile(&fh);
+    }
+
+    // read new page into victim frame
+    SM_FileHandle fh;
+    openPageFile(bm->pageFile, &fh);
+    RC rc = readBlock(pageNum, &fh, mgmt->frames[victim].data);
+    closePageFile(&fh);
+    if (rc != RC_OK) return rc;
+
+    mgmt->numReadIO++;
+    mgmt->frames[victim].pageNum = pageNum;
+    mgmt->frames[victim].dirty = false;
+    mgmt->frames[victim].fixCount = 1;
+
+    // update PageHandle
+    page->pageNum = pageNum;
+    page->data = mgmt->frames[victim].data;
+
     return RC_OK;
 }
 
