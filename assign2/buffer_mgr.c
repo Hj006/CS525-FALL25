@@ -25,6 +25,7 @@ typedef struct PoolMgmtData {
     int numReadIO;        // number of pages read from disk
     int numWriteIO;       // number of pages written to disk
     int nextVictim;       // index used for FIFO replacement
+    int clockHand;        // index used for CLOCK replacement
     void *strategyData;   // store stratData, which will be used in LRU-K 
 } PoolMgmtData;
 
@@ -74,6 +75,7 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
     mgmt->numReadIO = 0;
     mgmt->numWriteIO = 0;
     mgmt->nextVictim = 0; // FIFO pointer
+    mgmt->clockHand = 0; // CLOCK pointer
     mgmt->strategyData = stratData;
 
     // attach the pointer
@@ -276,7 +278,9 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             if (bm->strategy == RS_LRU) { // LRU strategy, count and see the time node of the call
                 mgmt->frames[i].ref = globalLRUCounter++;
             }
-
+            if (bm->strategy == RS_CLOCK) { // CLOCK strategy, when a page is pinned, the ref should always be 1
+                mgmt->frames[i].ref = 1; // Set reference bit
+            }
             return RC_OK;
         }
         i--; 
@@ -348,9 +352,25 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
                 break;
             }
 
-            case RS_CLOCK:
-                //victim = 
+            case RS_CLOCK: {
+                while (true) {
+                    // check the frame pointed by clockHand
+                    if (mgmt->frames[mgmt->clockHand].fixCount == 0) {
+                        if (mgmt->frames[mgmt->clockHand].ref == 1) {
+                            // if the current ref is 1, change it to 0
+                            mgmt->frames[mgmt->clockHand].ref = 0;
+                        } else {
+                            // if the current ref is 0，this is the victim
+                            victim = mgmt->clockHand;
+                            mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
+                            break; // victim found, while end here
+                        }
+                    }
+                    // victim not found yet, clockHand move to check next potential victim
+                    mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
+                }
                 break;
+            }
             case RS_LFU:
                 //victim = 
                 break;
