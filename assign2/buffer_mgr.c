@@ -135,8 +135,6 @@ RC shutdownBufferPool(BM_BufferPool *const bm) {
     bm->mgmtData = NULL;
     bm->pageFile = NULL;
     bm->numPages = 0;
-    bm->mgmtData = NULL;
-
 
     return RC_OK;
 }
