@@ -25,7 +25,7 @@ For this assignment, the main modifications were made to the following files:
    Utility files for error handling. They define error codes and provide helper functions for printing and debugging error messages.
 
 6. **test_assign2_1.c / test_assign2_2.c**  
-   Contains provided test cases for verifying the implementation of the buffer manager. The tests cover the FIFO and LRU replacement strategies, as well as error handling conditions. The Makefile compiles this file into the test executable.
+   Contains provided test cases for verifying the implementation of the buffer manager. The test_assign2_1.c covers the FIFO and LRU replacement strategies. The Makefile compiles these files into the test executable.
 
 7. **test_helper.h**  
    A helper header file used by `test_assign2_1.c / test_assign2_2.c` for testing convenience. It provides macros and utility functions to simplify writing and running tests.
@@ -37,7 +37,43 @@ For this assignment, the main modifications were made to the following files:
 
 ## 2. Design and Implementation of Functions
 
-### Pool Handling (init, shutdown, flush) 
+### 2.1 Core Design
+
+#### Key Data Structures
+
+1. Frame: Represents one page frame in the buffer pool.
+   It contains:
+   - pageNum: The page number of the disk page stored in this frame.
+   - data: A pointer to the page's content in memory.
+   - dirty: A boolean flag that indicates if the page has been modified.
+   - fixCount: The page's fix count, which tracks how many clients are using this page.
+   - ref: A reference field for replacement strategies, for example, a timestamp for LRU.
+
+2. PoolMgmtData: Stores all the management information for the entire buffer pool.
+   It contains:
+   - frames: A pointer to the array of Frame structures.
+   - numReadIO, numWriteIO: Counters for I/O operations.
+   - nextVictim: A pointer used for the FIFO strategy.
+   - clockHand: The clock hand pointer used for the CLOCK strategy.
+   - strategyData: A pointer for extra data needed by a strategy.
+
+#### Page Replacement Strategies
+
+1. FIFO (First-In, First-Out):
+This is implemented using a circular queue concept. The `nextVictim` pointer points to the next frame that is a candidate for replacement. When a replacement is needed, we choose the first frame it points to that has a `fixCount` of 0.
+
+2. LRU (Least Recently Used):
+We use a global counter `globalLRUCounter` as a timestamp. Whenever a page is accessed via `pinPage`, we update its `ref` field with the current value of this counter. When a replacement is needed, we choose the frame with the smallest `ref` value that also has a `fixCount` of 0.
+
+3. CLOCK:
+This strategy is an improvement on FIFO. We use the `clockHand` as the clock pointer. When searching for a victim, we start scanning from the `clockHand`'s position. If a frame's reference bit is 1, we set it to 0 and continue scanning. If the reference bit is 0, that frame is chosen for replacement.
+
+4. LRU-K:
+   ******TODOTODOTODOTODO****** 
+   
+### 2.2 Function Descriptions
+
+#### Pool Handling (init, shutdown, flush) 
 1. **initBufferPool** : To create a new buffer pool in memory, which includes a specified number of page frames.
 First, it allocates memory for a `PoolMgmtData` struct, which holds all keeping information for the pool.
 Next, it allocates an array of `Frame` structs, one for each page frame in the pool. Each frame is initialized with default values: `pageNum` is set to `NO_PAGE`, `dirty` is `false`, `fixCount` is 0, and memory is allocated for the page data itself.
@@ -50,7 +86,7 @@ Finally, it frees all allocated memory, including the data buffer for each frame
 
 3. **forceFlushPool** : To write all dirty pages from the buffer pool to disk. It iterates through all frames and writes the content back to the page file for any frame that is dirty and not pinned.
 
-### Page Access (pin, unpin, mark, force)
+#### Page Access (pin, unpin, mark, force)
 1. **pinPage** : To request a page from the page file and "pin" it in a frame in memory.
 First, it checks if the requested page is already present in one of the frames.
 - If yes, it increments that frame's `fixCount` and returns a pointer to its data. For LRU, it also updates a timestamp to mark it as recently used.
@@ -64,7 +100,7 @@ Finally, it updates the frame's metadata: `pageNum` is set to the new page's num
 4. **forcePage** : To write the current content of a specific page back to the disk.
 
 
-### Statistics (get functions)
+#### Statistics (get functions)
 1. **getFrameContents** : To get an array of page numbers representing the content of the buffer pool. It returns an array where the i-th element is the page number stored in the i-th frame.
 2. **getDirtyFlags** : To get an array of booleans. The i-th element is true if the page in the i-th frame is dirty.
 3. **getFixCounts** : To get an array of integers. The i-th element is the `fixCount` of the page in the i-th frame.
@@ -178,6 +214,7 @@ make clean
 * **Naicheng Wei** (A20278475)
 
 If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)** **[lwei3@ghawk.illinoistech.edu](mailto:lwei3@ghawk.illinoistech.edu)**
+
 
 
 
