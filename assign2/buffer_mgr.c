@@ -8,6 +8,8 @@
 
 #define RC_PINNED_PAGES_IN_BUFFER 400
 
+static long long globalLRUCounter = 0;
+
 // Frame represents one page frame in the buffer pool
 typedef struct Frame {
     PageNumber pageNum;   // current page number; if NO_PAGE, it's empty.
@@ -158,7 +160,11 @@ RC forceFlushPool(BM_BufferPool *const bm) {
             if ( frame->dirty && frame->fixCount == 0) {
                 
                 // wirte back using writeBlock
-                RC rc = writeBlock(frame->pageNum, (SM_FileHandle *) bm->mgmtData, frame->data);
+                //RC rc = writeBlock(frame->pageNum, (SM_FileHandle *) bm->mgmtData, frame->data);
+                SM_FileHandle fh;
+                RC rc = openPageFile(bm->pageFile, &fh);
+                writeBlock(frame->pageNum, &fh, frame->data);
+                closePageFile(&fh);
 
                 if (rc != RC_OK) {
                     return RC_WRITE_FAILED; 
@@ -265,6 +271,11 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             mgmt->frames[i].fixCount++;
             page->pageNum = pageNum;
             page->data = mgmt->frames[i].data;
+            
+            if (bm->strategy == RS_LRU) { // LRU strategy, count and see the time node of the call
+                mgmt->frames[i].ref = globalLRUCounter++;
+            }
+
             return RC_OK;
         }
         i--; 
@@ -341,7 +352,9 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
     mgmt->frames[victim].pageNum = pageNum;
     mgmt->frames[victim].dirty = false;
     mgmt->frames[victim].fixCount = 1;
-
+    if (bm->strategy == RS_LRU) { // LRU strategy, count and see the time node of the call
+        mgmt->frames[i].ref = globalLRUCounter++;
+    }
     // update PageHandle
     page->pageNum = pageNum;
     page->data = mgmt->frames[victim].data;
@@ -351,27 +364,65 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
 
 /* Buffer Manager Interface - Statistics*/
 
-// Return the page numbers stored in each frame
+
 PageNumber *getFrameContents (BM_BufferPool *const bm) {
-    return NULL;
+    /*
+      Iterate through all frames and store the pageNum in an array.
+      If a frame is empty, the pageNum will be NO_PAGE.
+    */
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+
+    // an arry to store the page number of the frame
+    PageNumber *contents = (PageNumber *) malloc(sizeof(PageNumber) * bm->numPages);
+
+    // copy the pageNum of each frame
+    for (int i = 0; i < bm->numPages; i++) {
+        contents[i] = mgmt->frames[i].pageNum; 
+    }
+
+    return contents;
 }
 
-// Return the dirty flags for each frame
+
 bool *getDirtyFlags (BM_BufferPool *const bm) {
-    return NULL;
+    /*
+      For loop the frame and put the dirty flag (true/false) into the array.
+    */
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+
+    bool *flags = (bool *) malloc(sizeof(bool) * bm->numPages);
+
+    for (int i = 0; i < bm->numPages; i++) {
+        flags[i] = mgmt->frames[i].dirty;  // true/false
+    }
+
+    return flags;
 }
 
-// Return the fix counts for each frame
+
 int *getFixCounts (BM_BufferPool *const bm) {
-    return NULL;
+    /*
+      get the fix counts for each frame
+    */ 
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+
+    int *fixCounts = (int *) malloc(sizeof(int) * bm->numPages);
+
+    for (int i = 0; i < bm->numPages; i++) {
+        fixCounts[i] = mgmt->frames[i].fixCount; 
+    }
+
+    return fixCounts;
 }
 
 // Return the number of pages read from disk
 int getNumReadIO (BM_BufferPool *const bm) {
-    return 0;
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+    return mgmt->numReadIO;
 }
 
 // Return the number of pages written to disk
 int getNumWriteIO (BM_BufferPool *const bm) {
-    return 0;
+    PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
+    return mgmt->numWriteIO;
 }
