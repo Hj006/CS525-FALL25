@@ -48,6 +48,7 @@ For this assignment, the main modifications were made to the following files:
    - dirty: A boolean flag that indicates if the page has been modified.
    - fixCount: The page's fix count, which tracks how many clients are using this page.
    - ref: A reference field for replacement strategies, for example, a timestamp for LRU.
+   - refBit: A reference field for CLOCK strategies
 
 2. PoolMgmtData: Stores all the management information for the entire buffer pool.
    It contains:
@@ -211,6 +212,7 @@ make clean
 * **Naicheng Wei** (A20278475)
 
 If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)** **[lwei3@ghawk.illinoistech.edu](mailto:lwei3@ghawk.illinoistech.edu)**
+
 
 
 
