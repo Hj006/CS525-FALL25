@@ -340,6 +340,9 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             else if (bm->strategy == RS_CLOCK) { // CLOCK strategy, when a page is pinned, the ref should always be 1
                 mgmt->frames[i].refBit = 1; // Set reference bit
             }
+            else if (bm->strategy == RS_LFU) { // Least frequently used strategy
+                mgmt->frames[i].ref++; // each time a page is found in the buffer, its frequency count is incremented by 1.
+            }                
             else if (bm->strategy == RS_LRU_K) {
                 LRUKData *data = (LRUKData *)mgmt->strategyData;
                 int K = data->K;
@@ -462,9 +465,27 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
                 break;
             }
 
-            case RS_LFU:
-                //victim = 
+            case RS_LFU: {
+                int victimIndex = -1; // this will be the index of the victim when finish
+                int minRef = __INT_MAX__; // Initialize the frequency count of the least frequently used frame with INT_MAX
+            
+                // to select a victim that has least frequent accessing
+                for (int i = 0; i < bm->numPages; i++) {
+                    if (mgmt->frames[i].fixCount == 0) {  // victim must be unpinned frames
+                        if (mgmt->frames[i].ref < minRef) {
+                            minRef = mgmt->frames[i].ref;
+                            victimIndex = i; // i is the index of the chosen victim frame
+                        }
+                    }
+                }
+            
+                if (victimIndex == -1) {  // if victimIndex is -1, all the frames pinned. Victim actually not found.
+                    return RC_PINNED_PAGES_IN_BUFFER;
+                }
+                
+                victim = victimIndex;
                 break;
+            }
 
             case RS_LRU_K: {
                 LRUKData *data = (LRUKData *)mgmt->strategyData;
@@ -545,10 +566,13 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
     if (bm->strategy == RS_LRU) { // LRU strategy, count and see the time node of the call
         mgmt->frames[victim].ref = globalLRUCounter++;
     }
-    if (bm->strategy == RS_CLOCK) { // CLOCK strategy
+    else if (bm->strategy == RS_CLOCK) { // CLOCK strategy
         mgmt->frames[victim].refBit = 1; // New page starts with reference bit 1
     }  
-    if (bm->strategy == RS_LRU_K) {
+    else if (bm->strategy == RS_LFU) { // least frequently used strategy
+        mgmt->frames[victim].ref = 1; // New page starts with reference bit 1
+    }  
+    else if (bm->strategy == RS_LRU_K) {
         LRUKData *data = (LRUKData *)mgmt->strategyData;
         int K = data->K;
         int idx = victim;
