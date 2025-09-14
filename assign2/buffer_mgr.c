@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #define RC_PINNED_PAGES_IN_BUFFER 400
 
@@ -29,6 +30,12 @@ typedef struct PoolMgmtData {
     int clockHand;        // index used for CLOCK replacement
     void *strategyData;   // store stratData
 } PoolMgmtData;
+
+typedef struct LRUKData {
+    int K;                     // K value
+    long long **histories;     // 2D array [numPages][K], Each frame's access history
+    int *historyCount;         // Number of valid accesses recorded for each frame
+} LRUKData;
 
 /*Pool Handling*/ 
 
@@ -79,6 +86,24 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
     mgmt->nextVictim = 0; // FIFO pointer
     mgmt->clockHand = 0; // CLOCK pointer
     mgmt->strategyData = stratData;
+    if (strategy == RS_LRU_K) {
+        LRUKData *data = malloc(sizeof(LRUKData));
+        data->K = 2; // set K = 2
+
+        // initialize and allocate memory
+        data->histories = malloc(sizeof(long long*) * numPages);
+        data->historyCount = malloc(sizeof(int) * numPages);
+
+        for (int i = 0; i < numPages; i++) {
+            data->histories[i] = malloc(sizeof(long long) * data->K);
+            for (int j = 0; j < data->K; j++) {
+                data->histories[i][j] = -1;  
+            }
+            data->historyCount[i] = 0;
+        }
+
+        mgmt->strategyData = data;
+    }
 
     // attach the pointer
     bm->pageFile = (char *) pageFileName;   // file name
@@ -127,6 +152,17 @@ RC shutdownBufferPool(BM_BufferPool *const bm) {
     }
 
     closePageFile(&fh);
+    
+    // if the strategy is LRU_K and pointer strategyData isn't null, free the struct LRUKData
+    if (bm->strategy == RS_LRU_K && mgmt->strategyData != NULL) {
+        LRUKData *data = (LRUKData *)mgmt->strategyData;
+        for (int i = 0; i < bm->numPages; i++) {
+            free(data->histories[i]);
+        }
+        free(data->histories);
+        free(data->historyCount);
+        free(data);
+    }
 
     //  free all allocated memory
     for (int i = 0; i < bm->numPages; i++) {
@@ -264,6 +300,27 @@ RC forcePage (BM_BufferPool *const bm, BM_PageHandle *const page) {
     return RC_READ_NON_EXISTING_PAGE; 
 }
 
+
+// Debug function: print K access history of all frames
+/* 
+static void printHistories(BM_BufferPool *const bm) {
+    PoolMgmtData *mgmt = (PoolMgmtData *)bm->mgmtData;
+    LRUKData *data = (LRUKData *)mgmt->strategyData;
+    int K = data->K;
+
+    printf("\n=== Histories Snapshot ===\n");
+    for (int i = 0; i < bm->numPages; i++) {
+        printf("Frame %d (page %d): ", i, mgmt->frames[i].pageNum);
+        for (int j = 0; j < K; j++) {
+            printf("%lld ", data->histories[i][j]);
+        }
+        printf("(count=%d)\n", data->historyCount[i]);
+    }
+    printf("==========================\n\n");
+}
+*/
+
+
 // Pin a page into the buffer pool
 RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page, 
             const PageNumber pageNum) {
@@ -282,6 +339,26 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             }
             else if (bm->strategy == RS_CLOCK) { // CLOCK strategy, when a page is pinned, the ref should always be 1
                 mgmt->frames[i].refBit = 1; // Set reference bit
+            }
+            else if (bm->strategy == RS_LRU_K) {
+                LRUKData *data = (LRUKData *)mgmt->strategyData;
+                int K = data->K;
+                int idx = i; 
+                globalLRUCounter++;
+
+                if (data->historyCount[idx] < K) {
+                    // not filled yet, add more directly
+                    data->histories[idx][data->historyCount[idx]] = globalLRUCounter;
+                    data->historyCount[idx]++;
+                } else {
+                    // alreday filled, left shift
+                    for (int j = 0; j < K - 1; j++) {
+                        data->histories[idx][j] = data->histories[idx][j + 1];
+                    }
+                    data->histories[idx][K - 1] = globalLRUCounter;
+                }
+
+                //printHistories(bm);
             }
             return RC_OK;
         }
@@ -384,12 +461,54 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
 
                 break;
             }
+
             case RS_LFU:
                 //victim = 
                 break;
-            case RS_LRU_K:
-                //victim = 
+
+            case RS_LRU_K: {
+                LRUKData *data = (LRUKData *)mgmt->strategyData;
+                int K = data->K;
+
+                int victimIndex = -1;
+                long long oldestKth = LLONG_MAX;
+
+                // to select a victim that has at least K access histories
+                for (int i = 0; i < bm->numPages; i++) {
+                    if (mgmt->frames[i].fixCount == 0) { // only consider unpinned frames
+                        if (data->historyCount[i] >= K) {
+                            // use the oldest one among last K accesses
+                            long long kth = data->histories[i][K - 1];
+                            if (kth < oldestKth) {
+                                oldestKth = kth;
+                                victimIndex = i;
+                            }
+                        }
+                    }
+                }
+
+                // if no frame has >= K accesses, use the most recent access
+                if (victimIndex == -1) {
+                    for (int i = 0; i < bm->numPages; i++) {
+                        if (mgmt->frames[i].fixCount == 0 && data->historyCount[i] > 0) {
+                            long long last = data->histories[i][data->historyCount[i] - 1];
+                            if (last < oldestKth) {
+                                oldestKth = last;
+                                victimIndex = i;
+                            }
+                        }
+                    }
+                }
+
+                // if still no victim found, it means all frames are pinned
+                if (victimIndex == -1) {
+                    return RC_PINNED_PAGES_IN_BUFFER;
+                }
+
+                victim = victimIndex;
                 break;
+            }
+            
             default:
                 return RC_WRITE_FAILED;  // the strategy is not involved
         }
@@ -427,8 +546,26 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
         mgmt->frames[victim].ref = globalLRUCounter++;
     }
     if (bm->strategy == RS_CLOCK) { // CLOCK strategy
-        mgmt->frames[i].refBit = 1; // New page starts with reference bit 1
-    }    
+        mgmt->frames[victim].refBit = 1; // New page starts with reference bit 1
+    }  
+    if (bm->strategy == RS_LRU_K) {
+        LRUKData *data = (LRUKData *)mgmt->strategyData;
+        int K = data->K;
+        int idx = victim;
+
+        //  clear History
+        for (int j = 0; j < K; j++) {
+            data->histories[idx][j] = -1;
+        }
+        data->historyCount[idx] = 0;
+
+        globalLRUCounter++;
+        // record the first visit to a new page
+        data->histories[idx][0] = globalLRUCounter;
+        data->historyCount[idx] = 1;
+    }
+
+  
     // update PageHandle
     page->pageNum = pageNum;
     page->data = mgmt->frames[victim].data;
