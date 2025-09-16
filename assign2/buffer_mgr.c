@@ -435,33 +435,26 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
             }
 
             case RS_CLOCK: {
-                int scanned = 0; // indicates how many pages have been scanned
-                int total = bm->numPages;
-                while (scanned < total) {
-                    Frame *candidate = &mgmt->frames[mgmt->clockHand];
+                while (true) {
+                    /*
+                    If the page is pinned, skip it.
+                    If refBit == 1, clear it to zero which means the second chance.
+                    If refBit == 0, select it as the victim.
+                    */
+                    Frame *candidate = &mgmt->frames[mgmt->clockHand]; // is the frame pointed to by the current pointer
 
                     if (candidate->fixCount == 0) {
                         if (candidate->refBit == 0) {
-                            // the case we find victim
                             victim = mgmt->clockHand;
                             mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
                             break;
                         } else {
-                            // one more chance
-                            candidate->refBit = 0;
+                            candidate->refBit = 0; // give second chance
                         }
                     }
 
-                    // take one step clockwise
                     mgmt->clockHand = (mgmt->clockHand + 1) % bm->numPages;
-                    scanned++;
                 }
-
-                // searched all but couldn't find victim
-                if (scanned == total) {
-                    return RC_PINNED_PAGES_IN_BUFFER;
-                }
-
                 break;
             }
 
@@ -567,7 +560,7 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page,
         mgmt->frames[victim].ref = globalLRUCounter++;
     }
     else if (bm->strategy == RS_CLOCK) { // CLOCK strategy
-        mgmt->frames[victim].refBit = 1; // New page starts with reference bit 1
+        mgmt->frames[victim].refBit = 0;
     }  
     else if (bm->strategy == RS_LFU) { // least frequently used strategy
         mgmt->frames[victim].ref = 1; // New page starts with reference bit 1
