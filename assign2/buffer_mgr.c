@@ -8,6 +8,7 @@
 #include <limits.h>
 
 #define RC_PINNED_PAGES_IN_BUFFER 400
+#define RC_BUFFER_POOL_NOT_INIT 5 
 
 static long long globalLRUCounter = 0;
 
@@ -56,6 +57,14 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
       Initialize counters.
       Set bm->pageFile, bm->numPages, bm->strategy.
      */
+
+    // test the input file if existing
+    SM_FileHandle fh;
+    RC rc = openPageFile((char *) pageFileName, &fh);
+    if (rc != RC_OK) {
+        return rc;  // return error
+    }
+    closePageFile(&fh);
 
     // allocate memory for management data
     PoolMgmtData *mgmt = (PoolMgmtData *) malloc(sizeof(PoolMgmtData));
@@ -127,14 +136,6 @@ RC shutdownBufferPool(BM_BufferPool *const bm) {
     // get the management data structure 
     PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
 
-    // check if there are still pinned pages
-    for (int i = 0; i < bm->numPages; i++) {
-        if (mgmt->frames[i].fixCount > 0) {
-            // pinned pages can't be  closed, return error 
-            return RC_PINNED_PAGES_IN_BUFFER;
-        }
-    }
-
     //  flush all dirty pages back to disk 
     SM_FileHandle fh;
     RC rc = openPageFile(bm->pageFile, &fh); 
@@ -187,6 +188,10 @@ RC forceFlushPool(BM_BufferPool *const bm) {
       writes the page back to disk, increments the write I/O counter and resets the dirty flag
     */
 
+    // check whether it is initialized
+    if (bm == NULL || bm->mgmtData == NULL) {
+        return RC_BUFFER_POOL_NOT_INIT; 
+    }
     // get the management structure
     PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
 
@@ -250,6 +255,11 @@ RC unpinPage (BM_BufferPool *const bm, BM_PageHandle *const page) {
       each time a page is unpinned, the "fixCount" of the page is reduced by 1, 
       indicating that a user/process is no longer using it.
     */
+
+    // check whether it is initialized
+    if (bm == NULL || bm->mgmtData == NULL) {
+        return RC_BUFFER_POOL_NOT_INIT;
+    }
 
     // get the management structure
     PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
@@ -324,6 +334,15 @@ static void printHistories(BM_BufferPool *const bm) {
 // Pin a page into the buffer pool
 RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page, 
             const PageNumber pageNum) {
+                
+    // check whether it is initialized                
+    if (bm == NULL || bm->mgmtData == NULL) {
+        return RC_BUFFER_POOL_NOT_INIT;
+    }
+
+    if (pageNum < 0) { // check pageNum
+        return RC_READ_NON_EXISTING_PAGE; 
+    }
     PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
 
     //if page is already in buffer
