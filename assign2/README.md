@@ -15,7 +15,7 @@ For this assignment, the main modifications were made to the following files:
 2. **buffer_mgr.c**  
    This is the core implementation file for the buffer manager. It defines the functions declared in `buffer_mgr.h` for initializing a buffer pool, managing pages using replacement strategies, and tracking statistics.
 
-3. **storage_mgr.h**  
+3. **buffer_mgr.h**  
    Header file for the buffer manager. It declares the public interface that `buffer_mgr.c` implements, including data structures like `BM_BufferPool` and `BM_PageHandle`.
 
 4. **storage_mgr.c / storage_mgr.h**
@@ -347,6 +347,7 @@ make clean
 * **Naicheng Wei** (A20278475)
 
 If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)** **[lwei3@ghawk.illinoistech.edu](mailto:lwei3@ghawk.illinoistech.edu)**
+
 
 
 
