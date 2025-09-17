@@ -1,4 +1,4 @@
-# CS525-F25-G02
+# CS525-F25-G02 Assignment 2
 
 ## 1. File Introduction
 
@@ -347,6 +347,7 @@ make clean
 * **Naicheng Wei** (A20278475)
 
 If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)** **[lwei3@ghawk.illinoistech.edu](mailto:lwei3@ghawk.illinoistech.edu)**
+
 
 
 
