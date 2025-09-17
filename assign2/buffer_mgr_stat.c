@@ -27,9 +27,6 @@ printPoolContent (BM_BufferPool *const bm)
 	for (i = 0; i < bm->numPages; i++)
 		printf("%s[%i%s%i]", ((i == 0) ? "" : ",") , frameContent[i], (dirty[i] ? "x": " "), fixCount[i]);
 	printf("\n");
-	free(frameContent); 
-	free(dirty); 
-	free(fixCount);
 }
 
 char *
@@ -49,9 +46,7 @@ sprintPoolContent (BM_BufferPool *const bm)
 
 	for (i = 0; i < bm->numPages; i++)
 		pos += sprintf(message + pos, "%s[%i%s%i]", ((i == 0) ? "" : ",") , frameContent[i], (dirty[i] ? "x": " "), fixCount[i]);
-	free(frameContent); 
-	free(dirty); 
-	free(fixCount);
+
 	return message;
 }
 
@@ -63,7 +58,7 @@ printPageContent (BM_PageHandle *const page)
 
 	printf("[Page %i]\n", page->pageNum);
 
-	for (i = 1; i < PAGE_SIZE; i++)
+	for (i = 1; i <= PAGE_SIZE; i++)
 		printf("%02X%s%s", page->data[i], (i % 8) ? "" : " ", (i % 64) ? "" : "\n");
 }
 
@@ -77,7 +72,7 @@ sprintPageContent (BM_PageHandle *const page)
 	message = (char *) malloc(30 + (2 * PAGE_SIZE) + (PAGE_SIZE % 64) + (PAGE_SIZE % 8));
 	pos += sprintf(message + pos, "[Page %i]\n", page->pageNum);
 
-	for (i = 1; i < PAGE_SIZE; i++)
+	for (i = 1; i <= PAGE_SIZE; i++)
 		pos += sprintf(message + pos, "%02X%s%s", page->data[i], (i % 8) ? "" : " ", (i % 64) ? "" : "\n");
 
 	return message;
