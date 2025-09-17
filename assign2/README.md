@@ -86,10 +86,7 @@ First, it allocates memory for a `PoolMgmtData` struct, which holds all keeping 
 Next, it allocates an array of `Frame` structs, one for each page frame in the pool. Each frame is initialized with default values: `pageNum` is set to `NO_PAGE`, `dirty` is `false`, `fixCount` is 0, and memory is allocated for the page data itself.
 Finally, it sets up the `BM_BufferPool` handle passed by the page file name, number of pages, and chosen replacement strategy.
 
-2. **shutdownBufferPool** : To safely destroy the buffer pool and free resources.
-First, it checks if no pages are currently pinned. If any page is still in use, it returns an error.
-Next, it writes dirty pages back to the disk file. This is similar to calling `forceFlushPool`.
-Finally, it frees all allocated memory, including the data buffer for each frame, the array of frames, and the `PoolMgmtData` struct itself.
+2. **shutdownBufferPool** : To safely destroy the buffer pool and free resources. It writes dirty pages back to the disk file. This is similar to calling `forceFlushPool`. Then, it frees all allocated memory, including the data buffer for each frame, the array of frames, and the `PoolMgmtData` struct itself.
 
 3. **forceFlushPool** : To write all dirty pages from the buffer pool to disk. It iterates through all frames and writes the content back to the page file for any frame that is dirty and not pinned.
 
@@ -107,15 +104,21 @@ Finally, it frees all allocated memory, including the data buffer for each frame
 
 
 2. **unpinPage** : To notify the buffer manager that the usage is finished with a page. It finds the corresponding frame and decrements its `fixCount` by one. If the page is not in the pool or its `fixCount` is already 0, an error is returned.
+
 3. **markDirty** :  To mark a page in the buffer as having been modified. It finds the corresponding frame and sets its `dirty flag` to true. If the page is not found in the buffer pool, it returns an error.
+
 4. **forcePage** : To write the current content of a specific page back to the disk. If the page is not in the pool, or the buffer pool is not initialized, it returns an error.
 
 
 #### Statistics (get functions)
 1. **getFrameContents** : To get an array of page numbers representing the content of the buffer pool. It returns an array where the i-th element is the page number stored in the i-th frame.
+
 2. **getDirtyFlags** : To get an array of booleans. The i-th element is true if the page in the i-th frame is dirty.
+
 3. **getFixCounts** : To get an array of integers. The i-th element is the `fixCount` of the page in the i-th frame.
+
 4. **getNumReadIO** : To get the total number of pages read from disk.
+
 5. **getNumWriteIO** : To get the total number of pages written to disk.
 
 ### 2.3 Other Modifications
@@ -347,6 +350,7 @@ make clean
 * **Naicheng Wei** (A20278475)
 
 If you have any questions, feel free to contact us at: **[jiangxiaobai1142@gmail.com](mailto:jiangxiaobai1142@gmail.com)** **[lwei3@ghawk.illinoistech.edu](mailto:lwei3@ghawk.illinoistech.edu)**
+
 
 
 
