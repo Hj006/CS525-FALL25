@@ -127,7 +127,6 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
 RC shutdownBufferPool(BM_BufferPool *const bm) {
     /*
       Safely close unused buffer pools
-      Check pinned pages. If there are still pages pinned (fixCount > 0), it means someone is still using these pages, which means there is an error
       Write all dirty pages back to disk
       Release all memory
       Clean up BM_BufferPool
@@ -207,7 +206,10 @@ RC forceFlushPool(BM_BufferPool *const bm) {
                 //RC rc = writeBlock(frame->pageNum, (SM_FileHandle *) bm->mgmtData, frame->data);
                 SM_FileHandle fh;
                 RC rc = openPageFile(bm->pageFile, &fh);
-                writeBlock(frame->pageNum, &fh, frame->data);
+                if (rc != RC_OK) {
+                    return rc;
+                }                
+                rc = writeBlock(frame->pageNum, &fh, frame->data);
                 closePageFile(&fh);
 
                 if (rc != RC_OK) {
