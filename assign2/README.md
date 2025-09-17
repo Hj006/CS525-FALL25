@@ -10,7 +10,7 @@ For this assignment, the main modifications were made to the following files:
 ### Overview of Files in the Project
 
 1. **Makefile**  
-   Used to compile the project. It builds the binary `test_assign1_1` from `test_assign1_1.c`, together with `dberror.c`， `storage_mgr.c` and the buffer manager implementation files. It also includes targets for cleaning build files and running the program.
+   Used to compile the project. It builds the test binaries (`test_assign2_1`, `test_assign2_2`, and `test_assign2_n`) from their respective `.c` files, together with the common sources (`dberror.c`, `storage_mgr.c`, `buffer_mgr.c`, and `buffer_mgr_stat.c`). It also provides targets for cleaning build files and running each test.
 
 2. **buffer_mgr.c**  
    This is the core implementation file for the buffer manager. It defines the functions declared in `buffer_mgr.h` for initializing a buffer pool, managing pages using replacement strategies, and tracking statistics.
@@ -27,10 +27,13 @@ For this assignment, the main modifications were made to the following files:
 6. **test_assign2_1.c / test_assign2_2.c**  
    Contains provided test cases for verifying the implementation of the buffer manager. The test_assign2_1.c covers the FIFO and LRU replacement strategies. The Makefile compiles these files into the test executable.
 
-7. **test_helper.h**  
-   A helper header file used by `test_assign2_1.c / test_assign2_2.c` for testing convenience. It provides macros and utility functions to simplify writing and running tests.
+7. **test_assign2_n.c**  
+   This additional test case is provided to evaluate the LFU and CLOCK page replacement strategies. It complements the existing tests by specifically checking the correctness of these strategies under different access patterns.
 
-8. **README.md**  
+8. **test_helper.h**  
+   A helper header file used by `test_assign2_1.c / test_assign2_2.c / test_assign2_n.c` for testing convenience. It provides macros and utility functions to simplify writing and running tests.
+
+9. **README.md**  
    This document. It describes the solution, design, and instructions for building and running the project.
 
 
@@ -69,7 +72,9 @@ We use a global counter `globalLRUCounter` as a timestamp. Whenever a page is ac
 3. CLOCK:
 This strategy is an improvement on FIFO. We use the `clockHand` as the clock pointer. When searching for a victim, we start scanning from the `clockHand`'s position. If a frame's reference bit is 1, we set it to 0 and continue scanning. If the reference bit is 0, that frame is chosen for replacement.
 
-4. LRU-K:
+4. LFU
+
+5. LRU-K:
    ******TODOTODOTODOTODO****** 
    
 ### 2.2 Function Descriptions
@@ -135,10 +140,12 @@ Finally, it updates the frame's metadata: `pageNum` is set to the new page's num
    make
    ```
 
-   This compiles the source files and generates the executable **`test_assign2_1`** and **`test_assign2_2`**.
+   This compiles the source files and generates the executable **`test_assign2_1`** ， **`test_assign2_2`** and **`test_assign2_n`**.
 
 ### Run Tests:
-Builds the project and immediately executes the test cases.
+Builds the project and executes the test cases.
+
+#### Using make
 1. Run the main test case (FIFO and LRU):
    ```bash
    make run1
@@ -147,6 +154,28 @@ Builds the project and immediately executes the test cases.
    ```bash
    make run2
    ```
+3. Run the third test case (CLOCK and LFU strategies):
+   ```bash
+   make runn
+   ```
+#### Run executables directly
+
+1. Run test 1:
+
+   ```bash
+   ./test_assign2_1
+   ```
+2. Run test 2:
+
+   ```bash
+   ./test_assign2_2
+   ```
+3. Run test n:
+
+   ```bash
+   ./test_assign2_n
+   ```
+
 ### Additional Targets
 
 1. **Clean build files**
@@ -187,6 +216,9 @@ make run1
 
 # Run the second test
 make run2
+
+# Run the additional test
+make runn
 ```
 
 
