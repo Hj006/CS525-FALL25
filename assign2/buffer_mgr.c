@@ -135,7 +135,11 @@ RC shutdownBufferPool(BM_BufferPool *const bm) {
 
     // get the management data structure 
     PoolMgmtData *mgmt = (PoolMgmtData *) bm->mgmtData;
-
+    for (int i = 0; i < bm->numPages; i++) {
+        if (mgmt->frames[i].fixCount > 0) {
+            return RC_PINNED_PAGES_IN_BUFFER;
+        }
+    }
     //  flush all dirty pages back to disk 
     SM_FileHandle fh;
     RC rc = openPageFile(bm->pageFile, &fh); 
@@ -207,7 +211,10 @@ RC forceFlushPool(BM_BufferPool *const bm) {
                 //RC rc = writeBlock(frame->pageNum, (SM_FileHandle *) bm->mgmtData, frame->data);
                 SM_FileHandle fh;
                 RC rc = openPageFile(bm->pageFile, &fh);
-                writeBlock(frame->pageNum, &fh, frame->data);
+                if (rc != RC_OK) {
+                    return rc;
+                }
+                rc = writeBlock(frame->pageNum, &fh, frame->data);
                 closePageFile(&fh);
 
                 if (rc != RC_OK) {
