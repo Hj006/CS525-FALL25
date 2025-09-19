@@ -164,74 +164,7 @@ We also extended the test suite by adding a new test program (`test_assign2_n.c`
 
   Example of using WSL and running `make` inside WSL:  
 
-   1. Navigate to Project Directory
-
-      Before compiling, make sure you are inside the `assign2` folder of the repository.
-      For example:
-
-      ```bash
-      cd CS525-F25-G02/assign2
-      ```
-
-      ![Figure 1. Navigate into the `assign2` folder before building.](./images/navigate.png)
-      
-
-   2. Compile the Project
-
-      Run the following command to compile the source code:
-
-      ```bash
-      make
-      ```
-
-      This will build all object files (`.o`) and generate executables for the test cases (`test_assign2_1`, `test_assign2_2`, and `test_assign2_n`).
-
-      ![Figure 2. Compiling the project using `make`.](./images/compile.png)
-
-   3. Run the Test Cases
-
-      There are **two ways** to run the tests:
-
-      #### Option A. Use `make run` Targets
-
-      The Makefile defines custom targets for running each test case:
-
-      ```bash
-      make run1    # runs test_assign2_1
-      make run2    # runs test_assign2_2
-      make runn    # runs test_assign2_n
-      ```
-
-      <p align="left">
-         <img src="./images/makerun.png" alt="Figure 3. Running tests using make run1, make run2, and make runn." width="500"/>
-      </p>
-
-
-      #### Option B. Run Executables Directly
-
-      You can also execute the compiled binaries directly:
-
-      ```bash
-      ./test_assign2_1
-      ./test_assign2_2
-      ./test_assign2_n
-      ```
-
-      ![Figure 4. Running tests directly via compiled executables.](./images/t.png)
-
-   4. Clean Build Files
-
-      To remove all compiled files and reset the build environment, run:
-
-      ```bash
-      make clean
-      ```
-
-      This deletes all object files and executables so you can rebuild from scratch.
-
-      ![Figure 5. Cleaning up build files with `make clean`.](./images/makeclean.png)
-
-
+  ![Figure 6. make](./images/make.png)
 
 ### Build Instructions
 1. Open a terminal (Linux/macOS) or a WSL terminal (Windows).
@@ -298,45 +231,70 @@ This section demonstrates how to build, run, and clean the project.
 All commands are executed inside the project directory (`/CS525/CS525-F25-G02/assign2`) using WSL.
 
 ### Step 1: Navigate to the project folder
+Before compiling, make sure you are inside the `assign2` folder of the repository.
+
 ```bash
 cd CS525/
 cd CS525-F25-G02/
 cd assign2
 ```
-
+![Figure 1. Navigate into the `assign2` folder before building.](./images/navigate.png)
 
 
 ### Step 2: Build the project with `make`
 
+Run the following command to compile the source code:
+
 ```bash
 make
 ```
+This will build all object files (`.o`) and generate executables for the test cases (`test_assign2_1`, `test_assign2_2`, and `test_assign2_n`).
 
+![Figure 2. Compiling the project using `make`.](./images/compile.png)
 
 
 ### Step 3: Execute the test programs using the run targets
 
-```bash
-# Run the first test
-make run1
+There are **two ways** to run the tests:
 
-# Run the second test
-make run2
+   #### Option A. Use `make run` Targets
 
-# Run the additional test
-make runn
-```
+   The Makefile defines custom targets for running each test case:
 
+   ```bash
+   make run1    # runs test_assign2_1
+   make run2    # runs test_assign2_2
+   make runn    # runs test_assign2_n
+   ```
+
+   <p align="left">
+      <img src="./images/makerun.png" alt="Figure 3. Running tests using make run1, make run2, and make runn." width="500"/>
+   </p>
+
+
+   #### Option B. Run Executables Directly
+
+   You can also execute the compiled binaries directly:
+
+   ```bash
+   ./test_assign2_1
+   ./test_assign2_2
+   ./test_assign2_n
+   ```
+
+   ![Figure 4. Running tests directly via compiled executables.](./images/t.png)
 
 
 ### Step 4: Clean build files
 
+To remove all compiled files and reset the build environment, run:
+
 ```bash
 make clean
 ```
+This deletes all object files and executables so you can rebuild from scratch.
 
-
-
+![Figure 5. Cleaning up build files with `make clean`.](./images/makeclean.png)
 
 
 
