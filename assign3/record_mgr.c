@@ -15,6 +15,11 @@ typedef struct TableMgmtData {
     int numTuples;
 } TableMgmtData;
 
+typedef struct RM_PageInfo {
+    int freeSlots;   // number of free record slots in this page
+} RM_PageInfo;
+
+
 // Table & Record Manager
 
 
@@ -173,18 +178,125 @@ int getNumTuples (RM_TableData *rel) {
 
 
 RC insertRecord (RM_TableData *rel, Record *record) {
+    // insert one record into the table
+    // mapping to INSERT INTO table VALUES (...)
+
+    // get table management info
+    TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm; // pointer to this table’s buffer pool
+    BM_PageHandle ph;
+
+    int recordSize = getRecordSize(rel->schema);
+    int recordsPerPage = PAGE_SIZE / recordSize; //  records/page
+   
+    // try from page 1, page 0 is metadata
+    int pageNum = 1;
+    RC rc;
+
+    while (1) {
+        rc = pinPage(bm, &ph, pageNum);
+        if (rc != RC_OK) { // Not enough, expand
+            // if page not exists, create new empty page
+            SM_FileHandle fh;
+            openPageFile(rel->name, &fh);
+            ensureCapacity(pageNum + 1, &fh);
+            closePageFile(&fh);
+            rc = pinPage(bm, &ph, pageNum);
+        }
+
+        // search for free slot in this page
+        bool found = false;
+        for (int i = 0; i < recordsPerPage; i++) {
+            int offset = i * recordSize;
+            if (ph.data[offset] == '\0') { // empty slot
+                memcpy(ph.data + offset, record->data, recordSize);
+
+                // set record ID
+                record->id.page = pageNum;
+                record->id.slot = i;
+
+                // mark dirty and unpin
+                markDirty(bm, &ph);
+                unpinPage(bm, &ph);
+                mgmt->numTuples++;
+                found = true;
+                break;
+            }
+        }
+
+        if (found) break; // inserted successfully
+        unpinPage(bm, &ph);
+        pageNum++; // move to next page
+    }
+
     return RC_OK;
 }
 
 RC deleteRecord (RM_TableData *rel, RID id) {
+    // delete record by marking slot empty
+
+    TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+    BM_PageHandle ph;
+
+    RC rc = pinPage(bm, &ph, id.page);
+    if (rc != RC_OK) return rc;
+
+    int recordSize = getRecordSize(rel->schema);
+    int offset = id.slot * recordSize;
+
+    // clear record bytes to mark as deleted
+    memset(ph.data + offset, '\0', recordSize);
+
+    markDirty(bm, &ph);
+    unpinPage(bm, &ph);
+
+    mgmt->numTuples--;
+
     return RC_OK;
 }
 
 RC updateRecord (RM_TableData *rel, Record *record) {
+    // update record content by RID
+
+    TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+    BM_PageHandle ph;
+
+    RC rc = pinPage(bm, &ph, record->id.page);
+    if (rc != RC_OK) return rc;
+
+    int recordSize = getRecordSize(rel->schema);
+    int offset = record->id.slot * recordSize;
+
+    // overwrite record content
+    memcpy(ph.data + offset, record->data, recordSize);
+
+    markDirty(bm, &ph);
+    unpinPage(bm, &ph);
+
     return RC_OK;
 }
 
 RC getRecord (RM_TableData *rel, RID id, Record *record) {
+    // get record data by RID
+    // mapping to SELECT * FROM table WHERE RID = id
+
+    TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+    BM_PageHandle ph;
+
+    RC rc = pinPage(bm, &ph, id.page);
+    if (rc != RC_OK) return rc;
+
+    int recordSize = getRecordSize(rel->schema);
+    int offset = id.slot * recordSize;
+
+    // copy data into record
+    memcpy(record->data, ph.data + offset, recordSize);
+    record->id = id;
+
+    unpinPage(bm, &ph);
     return RC_OK;
 }
 
