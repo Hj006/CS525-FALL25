@@ -19,6 +19,12 @@ typedef struct RM_PageInfo {
     int freeSlots;   // number of free record slots in this page
 } RM_PageInfo;
 
+typedef struct ScanMgmtData {
+    int currentPage;      // current page being scanned
+    int currentSlot;      // current slot within that page
+    Expr *cond;           // condition expression
+    BM_PageHandle ph;     // current page handle
+} ScanMgmtData;
 
 // Table & Record Manager
 
@@ -302,17 +308,116 @@ RC getRecord (RM_TableData *rel, RID id, Record *record) {
 
 
 //  Scan 
+// mapping to SELECT * FROM Students WHERE age > 20;
 
 
 RC startScan (RM_TableData *rel, RM_ScanHandle *scan, Expr *cond) {
+    // start a new scan on a table with a given condition
+    // similar to "SELECT * FROM table WHERE cond"
+/*
+初始化扫描器；
+
+保存条件表达式（cond）；
+
+从第一页、第一条记录开始扫描。
+*/
+    if (rel == NULL || rel->mgmtData == NULL)
+        return RC_RM_UNKOWN_DATATYPE;
+
+    // initialize scan structure
+    ScanMgmtData *scanData = (ScanMgmtData *) malloc(sizeof(ScanMgmtData));
+    scanData->currentPage = 1; // start from page 1 (page 0 is metadata)
+    scanData->currentSlot = 0; // start from first slot
+    scanData->cond = cond;
+
+    scan->rel = rel;
+    scan->mgmtData = scanData;
+
     return RC_OK;
 }
 
 RC next (RM_ScanHandle *scan, Record *record) {
-    return RC_OK;
+    // fetch next record matching the scan condition
+/*
+循环遍历所有页；
+
+每一页里循环扫描所有槽；
+
+如果槽不是空的：
+
+把数据读成 record
+
+如果 cond == NULL → 直接返回；
+
+否则用 evalExpr() 判断是否满足；
+
+满足则返回；
+
+全部扫完返回 RC_RM_NO_MORE_TUPLES。
+
+*/
+    RM_TableData *rel = scan->rel;
+    TableMgmtData *tableMgmt = (TableMgmtData *) rel->mgmtData;
+    BM_BufferPool *bm = tableMgmt->bm;
+    Schema *schema = rel->schema;
+
+    ScanMgmtData *scanData = (ScanMgmtData *) scan->mgmtData;
+
+    int recordSize = getRecordSize(schema);
+    int recordsPerPage = PAGE_SIZE / recordSize;
+
+    Value *result = NULL;
+
+    while (scanData->currentPage < (1 + (tableMgmt->numTuples / recordsPerPage) + 1)) {
+
+        RC rc = pinPage(bm, &scanData->ph, scanData->currentPage);
+        if (rc != RC_OK) return rc;
+
+        char *data = scanData->ph.data;
+
+        // scan all slots on current page
+        for (; scanData->currentSlot < recordsPerPage; scanData->currentSlot++) {
+            int offset = scanData->currentSlot * recordSize;
+            if (data[offset] == '\0') continue; // empty slot, skip
+
+            // load record
+            record->id.page = scanData->currentPage;
+            record->id.slot = scanData->currentSlot;
+            memcpy(record->data, data + offset, recordSize);
+
+            // evaluate condition (if any)
+            if (scanData->cond != NULL) {
+                evalExpr(record, schema, scanData->cond, &result);
+
+                if (result->v.boolV == TRUE) {
+                    scanData->currentSlot++;
+                    unpinPage(bm, &scanData->ph);
+                    freeVal(result);
+                    return RC_OK; // found matching record
+                }
+                freeVal(result);
+            } else {
+                // if no condition, return all records
+                scanData->currentSlot++;
+                unpinPage(bm, &scanData->ph);
+                return RC_OK;
+            }
+        }
+
+        // done scanning this page
+        unpinPage(bm, &scanData->ph);
+        scanData->currentPage++;
+        scanData->currentSlot = 0;
+    }
+
+    return RC_RM_NO_MORE_TUPLES; // reached end
 }
 
 RC closeScan (RM_ScanHandle *scan) {
+    // close scan and free scan management data
+    if (scan->mgmtData != NULL)
+        free(scan->mgmtData);
+    scan->mgmtData = NULL;
     return RC_OK;
 }
 
@@ -321,15 +426,74 @@ RC closeScan (RM_ScanHandle *scan) {
 
 
 int getRecordSize (Schema *schema) {
-    return 0;
+    // calculate total number of bytes needed to store one record
+    int size = 0;
+
+    for (int i = 0; i < schema->numAttr; i++) {
+        switch (schema->dataTypes[i]) {
+            case DT_INT:
+                size += sizeof(int);
+                break;
+            case DT_FLOAT:
+                size += sizeof(float);
+                break;
+            case DT_BOOL:
+                size += sizeof(bool);
+                break;
+            case DT_STRING:
+                size += schema->typeLength[i];
+                break;
+        }
+    }
+
+    return size;
 }
 
 Schema *createSchema (int numAttr, char **attrNames, DataType *dataTypes,
                       int *typeLength, int keySize, int *keys) {
-    return NULL;
+    // allocate memory for Schema
+    Schema *schema = (Schema *) malloc(sizeof(Schema));
+
+    schema->numAttr = numAttr;
+
+    // copy attribute names
+    schema->attrNames = (char **) malloc(sizeof(char *) * numAttr);
+    for (int i = 0; i < numAttr; i++) {
+        schema->attrNames[i] = (char *) malloc(strlen(attrNames[i]) + 1);
+        strcpy(schema->attrNames[i], attrNames[i]);
+    }
+
+    // copy data types
+    schema->dataTypes = (DataType *) malloc(sizeof(DataType) * numAttr);
+    memcpy(schema->dataTypes, dataTypes, sizeof(DataType) * numAttr);
+
+    // copy type lengths
+    schema->typeLength = (int *) malloc(sizeof(int) * numAttr);
+    memcpy(schema->typeLength, typeLength, sizeof(int) * numAttr);
+
+    // copy key info
+    schema->keySize = keySize;
+    schema->keyAttrs = (int *) malloc(sizeof(int) * keySize);
+    memcpy(schema->keyAttrs, keys, sizeof(int) * keySize);
+
+    return schema;
 }
 
 RC freeSchema (Schema *schema) {
+    // free each attribute name
+    for (int i = 0; i < schema->numAttr; i++) {
+        free(schema->attrNames[i]);
+    }
+
+    // free arrays
+    free(schema->attrNames);
+    free(schema->dataTypes);
+    free(schema->typeLength);
+    free(schema->keyAttrs);
+
+    // free schema itself
+    free(schema);
+
     return RC_OK;
 }
 
