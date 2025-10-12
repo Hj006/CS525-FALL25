@@ -124,7 +124,7 @@ RC createTable (char *name, Schema *schema) {
     // line 2: first free page
     // line 3+: schema info
     // Debug print 
-    printf("[createTable] Writing metadata:\n%s\n", ph.data);
+    //printf("[createTable] Writing metadata:\n%s\n", ph.data);
     free(serializedSchema);
 
     // mark page dirty, write back to disk, unpin
@@ -256,8 +256,8 @@ RC insertRecord (RM_TableData *rel, Record *record) {
     RC rc;
 
     while (1) {
-        if (pageNum % 500 == 0)
-        printf("[insertRecord] currently on page=%d\n", pageNum);
+        //if (pageNum % 500 == 0)
+        //printf("[insertRecord] currently on page=%d\n", pageNum);
 
         rc = pinPage(bm, &ph, pageNum);
         if (rc != RC_OK) { // Not enough, expand
@@ -452,21 +452,18 @@ Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
     Value *result = NULL;
     RC rc;
 
-    while (1) {
-        int totalPages = (tableMgmt->numTuples + recordsPerPage - 1) / recordsPerPage;
-        if (scanData->currentPage > totalPages)
-            return RC_RM_NO_MORE_TUPLES;
+    int totalPages = (tableMgmt->numTuples + recordsPerPage - 1) / recordsPerPage;
+    if (totalPages == 0) totalPages = 1;
 
+    while (scanData->currentPage <= totalPages) {
         rc = pinPage(bm, &scanData->ph, scanData->currentPage);
-        if (rc != RC_OK)
-            return rc;
+        if (rc != RC_OK) return rc;
 
         char *data = scanData->ph.data;
 
         for (; scanData->currentSlot < recordsPerPage; scanData->currentSlot++) {
             int offset = scanData->currentSlot * slotSize;
-            if (data[offset] == '0' || data[offset] == '\0')
-                continue;
+            if (data[offset] != '1') continue; // skip empty slot
 
             record->id.page = scanData->currentPage;
             record->id.slot = scanData->currentSlot;
@@ -485,9 +482,7 @@ Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
                 unpinPage(bm, &scanData->ph);
                 return RC_OK;
             }
-
-            if (result != NULL)
-                freeVal(result);
+            if (result != NULL) freeVal(result);
         }
 
         unpinPage(bm, &scanData->ph);
@@ -673,8 +668,7 @@ RC getAttr (Record *record, Schema *schema, int attrNum, Value **value) {
             buf[schema->typeLength[attrNum]] = '\0';
             MAKE_STRING_VALUE(*value, buf);
             free(buf);
-            printf("[DEBUG getAttr] attrNum=%d typeLength=%d data='%s'\n",
-                attrNum, schema->typeLength[attrNum], (*value)->v.stringV);
+            //printf("[DEBUG getAttr] attrNum=%d typeLength=%d data='%s'\n",attrNum, schema->typeLength[attrNum], (*value)->v.stringV);
             break;
         }
 
@@ -724,7 +718,7 @@ RC setAttr (Record *record, Schema *schema, int attrNum, Value *value) {
             } else {
                 data[0] = '\0';
             }
-            printf("[DEBUG setAttr] attrNum=%d write='%s'\n", attrNum, data);
+            //printf("[DEBUG setAttr] attrNum=%d write='%s'\n", attrNum, data);
             break;
         }
 
