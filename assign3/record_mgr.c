@@ -176,7 +176,11 @@ RC openTable (RM_TableData *rel, char *name) {
     if (pos == NULL) return RC_FILE_NOT_FOUND;
     pos++;
 
-    Schema *schema = parseSchemaString(pos);
+    //Schema *schema = parseSchemaString(pos);
+    char *schemaCopy = strdup(pos);
+    Schema *schema = parseSchemaString(schemaCopy);
+    free(schemaCopy);
+
 
 
     // initialize the table structure
@@ -226,7 +230,8 @@ RC deleteTable (char *name) {
 }
 
 int getNumTuples (RM_TableData *rel) {
-    return 0;
+    TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
+    return mgmt->numTuples;
 }
 
 
@@ -357,6 +362,8 @@ RC updateRecord (RM_TableData *rel, Record *record) {
 RC getRecord (RM_TableData *rel, RID id, Record *record) {
     // get record data by RID
     // mapping to SELECT * FROM table WHERE RID = id
+    if (record == NULL || record->data == NULL)
+        return RC_RM_UNKOWN_DATATYPE;
 
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = mgmt->bm;
@@ -403,14 +410,17 @@ RC startScan (RM_TableData *rel, RM_ScanHandle *scan, Expr *cond) {
     scanData->currentPage = 1; // start from page 1 (page 0 is metadata)
     scanData->currentSlot = 0; // start from first slot
     scanData->cond = cond;
-
+    scanData->ph.pageNum = -1;
+    scanData->ph.data = NULL;  
     scan->rel = rel;
     scan->mgmtData = scanData;
 
     return RC_OK;
 }
 
+
 RC next (RM_ScanHandle *scan, Record *record) {
+
     // fetch next record matching the scan condition
 /*
 Loop through all pages;
@@ -434,66 +444,76 @@ Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
     TableMgmtData *tableMgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = tableMgmt->bm;
     Schema *schema = rel->schema;
-
     ScanMgmtData *scanData = (ScanMgmtData *) scan->mgmtData;
 
     int recordSize = getRecordSize(schema);
-    int recordsPerPage = PAGE_SIZE / recordSize;
-
+    int slotSize = recordSize + 1;
+    int recordsPerPage = PAGE_SIZE / slotSize;
     Value *result = NULL;
+    RC rc;
 
-    while (scanData->currentPage < (1 + (tableMgmt->numTuples / recordsPerPage) + 1)) {
+    while (1) {
+        int totalPages = (tableMgmt->numTuples + recordsPerPage - 1) / recordsPerPage;
+        if (scanData->currentPage > totalPages)
+            return RC_RM_NO_MORE_TUPLES;
 
-        RC rc = pinPage(bm, &scanData->ph, scanData->currentPage);
-        if (rc != RC_OK) return rc;
+        rc = pinPage(bm, &scanData->ph, scanData->currentPage);
+        if (rc != RC_OK)
+            return rc;
 
         char *data = scanData->ph.data;
 
-        // scan all slots on current page
         for (; scanData->currentSlot < recordsPerPage; scanData->currentSlot++) {
-            int offset = scanData->currentSlot * recordSize;
-            if (data[offset] == '\0') continue; // empty slot, skip
+            int offset = scanData->currentSlot * slotSize;
+            if (data[offset] == '0' || data[offset] == '\0')
+                continue;
 
-            // load record
             record->id.page = scanData->currentPage;
             record->id.slot = scanData->currentSlot;
-            memcpy(record->data, data + offset, recordSize);
+            memcpy(record->data, data + offset + 1, recordSize);
 
-            // evaluate condition (if any)
-            if (scanData->cond != NULL) {
-                evalExpr(record, schema, scanData->cond, &result);
-
-                if (result->v.boolV == TRUE) {
-                    scanData->currentSlot++;
-                    unpinPage(bm, &scanData->ph);
-                    freeVal(result);
-                    return RC_OK; // found matching record
-                }
-                freeVal(result);
-            } else {
-                // if no condition, return all records
+            if (scanData->cond == NULL) {
                 scanData->currentSlot++;
                 unpinPage(bm, &scanData->ph);
                 return RC_OK;
             }
+
+            rc = evalExpr(record, schema, scanData->cond, &result);
+            if (rc == RC_OK && result != NULL && result->v.boolV == TRUE) {
+                freeVal(result);
+                scanData->currentSlot++;
+                unpinPage(bm, &scanData->ph);
+                return RC_OK;
+            }
+
+            if (result != NULL)
+                freeVal(result);
         }
 
-        // done scanning this page
         unpinPage(bm, &scanData->ph);
         scanData->currentPage++;
         scanData->currentSlot = 0;
     }
 
-    return RC_RM_NO_MORE_TUPLES; // reached end
+    return RC_RM_NO_MORE_TUPLES;
 }
 
+
 RC closeScan (RM_ScanHandle *scan) {
-    // close scan and free scan management data
-    if (scan->mgmtData != NULL)
-        free(scan->mgmtData);
+    if (scan == NULL || scan->mgmtData == NULL)
+        return RC_OK;
+
+    ScanMgmtData *scanData = (ScanMgmtData *) scan->mgmtData;
+    TableMgmtData *tableMgmt = (TableMgmtData *) scan->rel->mgmtData;
+
+    if (scanData->ph.data != NULL)
+        unpinPage(tableMgmt->bm, &scanData->ph);
+
+    free(scanData);
     scan->mgmtData = NULL;
     return RC_OK;
 }
+
 
 
 //  Schema 
@@ -586,8 +606,9 @@ typedef struct Record {
 RC createRecord (Record **record, Schema *schema) {
     // create a new, empty record
     *record = (Record *) malloc(sizeof(Record));
-    int size = getRecordSize(schema) + 1;  // +1 for slot flag
-    (*record)->data = (char *) malloc(size);
+    //int size = getRecordSize(schema) + 1;  // +1 for slot flag
+    int size = getRecordSize(schema);
+    (*record)->data = calloc(1, size);
     
     // initialize record content
     memset((*record)->data, 0, size);
@@ -611,7 +632,8 @@ RC getAttr (Record *record, Schema *schema, int attrNum, Value **value) {
         return RC_RM_UNKOWN_DATATYPE;
 
     int offset = 0;
-    char *data = record->data + 1;
+    //char *data = record->data + 1;
+    char *data = record->data;
     // compute offset for this attribute
     for (int i = 0; i < attrNum; i++) {
         switch (schema->dataTypes[i]) {
@@ -645,13 +667,18 @@ RC getAttr (Record *record, Schema *schema, int attrNum, Value **value) {
             break;
         }
         case DT_STRING: {
-            char *buf = (char *) malloc(schema->typeLength[attrNum] + 1);
+            char *buf = malloc(schema->typeLength[attrNum] + 1);
+            memset(buf, 0, schema->typeLength[attrNum] + 1);
             strncpy(buf, data, schema->typeLength[attrNum]);
             buf[schema->typeLength[attrNum]] = '\0';
             MAKE_STRING_VALUE(*value, buf);
             free(buf);
+            printf("[DEBUG getAttr] attrNum=%d typeLength=%d data='%s'\n",
+                attrNum, schema->typeLength[attrNum], (*value)->v.stringV);
             break;
         }
+
+
     }
 
     return RC_OK;
@@ -663,7 +690,8 @@ RC setAttr (Record *record, Schema *schema, int attrNum, Value *value) {
         return RC_RM_UNKOWN_DATATYPE;
 
     int offset = 0;
-    char *data = record->data + 1; // skip the flag byte
+    // char *data = record->data + 1; // skip the flag byte
+    char *data = record->data; 
     // compute offset for this attribute
     for (int i = 0; i < attrNum; i++) {
         switch (schema->dataTypes[i]) {
@@ -687,11 +715,18 @@ RC setAttr (Record *record, Schema *schema, int attrNum, Value *value) {
         case DT_BOOL:
             memcpy(data, &(value->v.boolV), sizeof(bool));
             break;
-        case DT_STRING:
-            memset(data, 0, schema->typeLength[attrNum]); // clear old content
-            strncpy(data, value->v.stringV, schema->typeLength[attrNum] - 1);
-            data[schema->typeLength[attrNum] - 1] = '\0'; // ensure null-terminated
+        case DT_STRING: {
+            memset(data, 0, schema->typeLength[attrNum] + 1); // Clear old data
+            if (value->v.stringV != NULL) {
+                // Allows writing of typeLength characters, and then fills in '\0'
+                strncpy(data, value->v.stringV, schema->typeLength[attrNum]);
+                data[schema->typeLength[attrNum]] = '\0';
+            } else {
+                data[0] = '\0';
+            }
+            printf("[DEBUG setAttr] attrNum=%d write='%s'\n", attrNum, data);
             break;
+        }
 
     }
 
