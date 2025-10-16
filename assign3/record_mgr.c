@@ -181,7 +181,8 @@ RC openTable (RM_TableData *rel, char *name) {
     Schema *schema = parseSchemaString(schemaCopy);
     free(schemaCopy);
 
-
+    if (schema == NULL)
+        return RC_RM_UNKOWN_DATATYPE;
 
     // initialize the table structure
     rel->name = strdup(name);
@@ -267,7 +268,9 @@ RC insertRecord (RM_TableData *rel, Record *record) {
             ensureCapacity(pageNum + 1, &fh);
             closePageFile(&fh);
             rc = pinPage(bm, &ph, pageNum);
-            
+            if (rc != RC_OK) { // check rc to prevent invalid ph.data access
+                return rc;
+            }  
             //  prevent garbage data
             memset(ph.data, '0', PAGE_SIZE);
             markDirty(bm, &ph);
@@ -311,6 +314,9 @@ RC insertRecord (RM_TableData *rel, Record *record) {
 }
 
 RC deleteRecord (RM_TableData *rel, RID id) {
+    if (rel == NULL || rel->mgmtData == NULL)
+        return RC_FILE_NOT_FOUND;
+    
     // delete record by marking slot empty
 
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
@@ -349,6 +355,11 @@ RC updateRecord (RM_TableData *rel, Record *record) {
     int slotSize = recordSize + 1;  // containing tag
     int offset = record->id.slot * slotSize;
 
+    if (offset + slotSize > PAGE_SIZE) {
+        unpinPage(bm, &ph);
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+    
     // overwrite record content, skipping tag byte
     ph.data[offset] = '1';  // remark
     memcpy(ph.data + offset + 1, record->data, recordSize);
@@ -364,7 +375,10 @@ RC getRecord (RM_TableData *rel, RID id, Record *record) {
     // mapping to SELECT * FROM table WHERE RID = id
     if (record == NULL || record->data == NULL)
         return RC_RM_UNKOWN_DATATYPE;
-
+    // check table handle validity
+    if (rel == NULL || rel->mgmtData == NULL)
+        return RC_FILE_NOT_FOUND;
+    
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = mgmt->bm;
     BM_PageHandle ph;
@@ -384,7 +398,18 @@ RC getRecord (RM_TableData *rel, RID id, Record *record) {
     //}
     //printf("\n");
 
+    // boundary check
+    if (offset + slotSize > PAGE_SIZE) { // avoid out-of-range access
+        unpinPage(bm, &ph); 
+        return RC_READ_NON_EXISTING_PAGE;
+    }
 
+    // check if this slot is occupied or not
+    if (ph.data[offset] != '1') { //'1' means valid record
+        unpinPage(bm, &ph);
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+    
     // copy data into record, skip the 1-byte slot tag
     memcpy(record->data, ph.data + offset+1, recordSize);
     record->id = id;
@@ -440,6 +465,9 @@ If satisfied, return;
 Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
 
 */
+    if (scan == NULL || scan->rel == NULL || scan->mgmtData == NULL)
+        return RC_FILE_NOT_FOUND;
+    
     RM_TableData *rel = scan->rel;
     TableMgmtData *tableMgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = tableMgmt->bm;
@@ -515,6 +543,10 @@ RC closeScan (RM_ScanHandle *scan) {
 
 
 int getRecordSize (Schema *schema) {
+    // Return 0 if schema is invalid
+    if (schema == NULL || schema->dataTypes == NULL || schema->typeLength == NULL)
+        return 0;
+    
     // calculate total number of bytes needed to store one record
     int size = 0;
 
@@ -540,6 +572,10 @@ int getRecordSize (Schema *schema) {
 
 Schema *createSchema (int numAttr, char **attrNames, DataType *dataTypes,
                       int *typeLength, int keySize, int *keys) {
+    // Return NULL if input parameters are invalid
+    if (numAttr <= 0 || attrNames == NULL || dataTypes == NULL || typeLength == NULL)
+        return NULL;    //schema creation failed
+    
     // allocate memory for Schema
     Schema *schema = (Schema *) malloc(sizeof(Schema));
 
@@ -562,13 +598,19 @@ Schema *createSchema (int numAttr, char **attrNames, DataType *dataTypes,
 
     // copy key info
     schema->keySize = keySize;
-    schema->keyAttrs = (int *) malloc(sizeof(int) * keySize);
-    memcpy(schema->keyAttrs, keys, sizeof(int) * keySize);
-
+    if (keySize > 0) {    // allocate key attribute array only when keySize > 0 
+        schema->keyAttrs = (int *) malloc(sizeof(int) * keySize);
+        memcpy(schema->keyAttrs, keys, sizeof(int) * keySize);
+    } else {
+        schema->keyAttrs = NULL; // avoid undefined malloc(0) 
+    }
     return schema;
 }
 
 RC freeSchema (Schema *schema) {
+    // Return RC_OK for a NULL schema
+    if (schema == NULL) return RC_OK;
+    
     // free each attribute name
     for (int i = 0; i < schema->numAttr; i++) {
         free(schema->attrNames[i]);
@@ -622,8 +664,12 @@ RC freeRecord (Record *record) {
 }
 
 RC getAttr (Record *record, Schema *schema, int attrNum, Value **value) {
+    // Validate input
+    if (record == NULL || record->data == NULL || schema == NULL)
+        return RC_FILE_NOT_FOUND;
+    
     // check if attrNum is valid
-    if (attrNum >= schema->numAttr)
+    if (attrNum < 0 ||attrNum >= schema->numAttr)
         return RC_RM_UNKOWN_DATATYPE;
 
     int offset = 0;
