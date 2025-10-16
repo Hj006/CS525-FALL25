@@ -554,6 +554,10 @@ int getRecordSize (Schema *schema) {
 
 Schema *createSchema (int numAttr, char **attrNames, DataType *dataTypes,
                       int *typeLength, int keySize, int *keys) {
+    // Return NULL if input parameters are invalid
+    if (numAttr <= 0 || attrNames == NULL || dataTypes == NULL || typeLength == NULL)
+        return NULL;    //schema creation failed
+    
     // allocate memory for Schema
     Schema *schema = (Schema *) malloc(sizeof(Schema));
 
@@ -576,9 +580,12 @@ Schema *createSchema (int numAttr, char **attrNames, DataType *dataTypes,
 
     // copy key info
     schema->keySize = keySize;
-    schema->keyAttrs = (int *) malloc(sizeof(int) * keySize);
-    memcpy(schema->keyAttrs, keys, sizeof(int) * keySize);
-
+    if (keySize > 0) {    // allocate key attribute array only when keySize > 0 
+        schema->keyAttrs = (int *) malloc(sizeof(int) * keySize);
+        memcpy(schema->keyAttrs, keys, sizeof(int) * keySize);
+    } else {
+        schema->keyAttrs = NULL; // avoid undefined malloc(0) 
+    }
     return schema;
 }
 
