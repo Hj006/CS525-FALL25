@@ -364,7 +364,10 @@ RC getRecord (RM_TableData *rel, RID id, Record *record) {
     // mapping to SELECT * FROM table WHERE RID = id
     if (record == NULL || record->data == NULL)
         return RC_RM_UNKOWN_DATATYPE;
-
+    // check table handle validity
+    if (rel == NULL || rel->mgmtData == NULL)
+        return RC_FILE_NOT_FOUND;
+    
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = mgmt->bm;
     BM_PageHandle ph;
@@ -384,7 +387,18 @@ RC getRecord (RM_TableData *rel, RID id, Record *record) {
     //}
     //printf("\n");
 
+    // boundary check
+    if (offset + slotSize > PAGE_SIZE) { // avoid out-of-range access
+        unpinPage(bm, &ph); 
+        return RC_READ_NON_EXISTING_PAGE;
+    }
 
+    // check if this slot is occupied or not
+    if (ph.data[offset] != '1') { //'1' means valid record
+        unpinPage(bm, &ph);
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+    
     // copy data into record, skip the 1-byte slot tag
     memcpy(record->data, ph.data + offset+1, recordSize);
     record->id = id;
