@@ -529,6 +529,10 @@ RC closeScan (RM_ScanHandle *scan) {
 
 
 int getRecordSize (Schema *schema) {
+    // Return 0 if schema is invalid
+    if (schema == NULL || schema->dataTypes == NULL || schema->typeLength == NULL)
+        return 0;
+    
     // calculate total number of bytes needed to store one record
     int size = 0;
 
