@@ -181,7 +181,8 @@ RC openTable (RM_TableData *rel, char *name) {
     Schema *schema = parseSchemaString(schemaCopy);
     free(schemaCopy);
 
-
+    if (schema == NULL)
+        return RC_RM_UNKOWN_DATATYPE;
 
     // initialize the table structure
     rel->name = strdup(name);
@@ -313,6 +314,9 @@ RC insertRecord (RM_TableData *rel, Record *record) {
 }
 
 RC deleteRecord (RM_TableData *rel, RID id) {
+    if (rel == NULL || rel->mgmtData == NULL)
+        return RC_FILE_NOT_FOUND;
+    
     // delete record by marking slot empty
 
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
@@ -351,6 +355,11 @@ RC updateRecord (RM_TableData *rel, Record *record) {
     int slotSize = recordSize + 1;  // containing tag
     int offset = record->id.slot * slotSize;
 
+    if (offset + slotSize > PAGE_SIZE) {
+        unpinPage(bm, &ph);
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+    
     // overwrite record content, skipping tag byte
     ph.data[offset] = '1';  // remark
     memcpy(ph.data + offset + 1, record->data, recordSize);
@@ -456,6 +465,9 @@ If satisfied, return;
 Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
 
 */
+    if (scan == NULL || scan->rel == NULL || scan->mgmtData == NULL)
+        return RC_FILE_NOT_FOUND;
+    
     RM_TableData *rel = scan->rel;
     TableMgmtData *tableMgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = tableMgmt->bm;
