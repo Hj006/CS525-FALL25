@@ -590,6 +590,9 @@ Schema *createSchema (int numAttr, char **attrNames, DataType *dataTypes,
 }
 
 RC freeSchema (Schema *schema) {
+    // Return RC_OK for a NULL schema
+    if (schema == NULL) return RC_OK;
+    
     // free each attribute name
     for (int i = 0; i < schema->numAttr; i++) {
         free(schema->attrNames[i]);
