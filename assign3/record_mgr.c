@@ -267,7 +267,9 @@ RC insertRecord (RM_TableData *rel, Record *record) {
             ensureCapacity(pageNum + 1, &fh);
             closePageFile(&fh);
             rc = pinPage(bm, &ph, pageNum);
-            
+            if (rc != RC_OK) { // check rc to prevent invalid ph.data access
+                return rc;
+            }  
             //  prevent garbage data
             memset(ph.data, '0', PAGE_SIZE);
             markDirty(bm, &ph);
