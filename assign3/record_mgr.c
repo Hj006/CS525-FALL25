@@ -652,8 +652,12 @@ RC freeRecord (Record *record) {
 }
 
 RC getAttr (Record *record, Schema *schema, int attrNum, Value **value) {
+    // Validate input
+    if (record == NULL || record->data == NULL || schema == NULL)
+        return RC_FILE_NOT_FOUND;
+    
     // check if attrNum is valid
-    if (attrNum >= schema->numAttr)
+    if (attrNum < 0 ||attrNum >= schema->numAttr)
         return RC_RM_UNKOWN_DATATYPE;
 
     int offset = 0;
