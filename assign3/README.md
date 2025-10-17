@@ -1,4 +1,4 @@
-# CS525-F25-G02 Assignment 3 (TODO)
+# CS525-F25-G02 Assignment 3 (not finished yet)
 
 ## 1. File Introduction
 
@@ -10,76 +10,62 @@ For this assignment, the main modifications were made to the following files:
 ### Overview of Files in the Project
 
 1. **Makefile**  
-   Used to compile the project. It builds the test binaries (`test_assign2_1`, `test_assign2_2`, and `test_assign2_n`) from their respective `.c` files, together with the common sources (`dberror.c`, `storage_mgr.c`, `buffer_mgr.c`, and `buffer_mgr_stat.c`). It also provides targets for cleaning build files and running each test.
+   Used to compile the project. It builds the test binaries (`test_assign3_1`) from their respective `.c` files, together with the common sources. It also provides targets for compilation, execution, and cleanup.
 
-2. **buffer_mgr.c**  
-   This is the core implementation file for the buffer manager. It defines the functions declared in `buffer_mgr.h` for initializing a buffer pool, managing pages using replacement strategies, and tracking statistics.
-
-3. **buffer_mgr.h**  
-   Header file for the buffer manager. It declares the public interface that `buffer_mgr.c` implements, including data structures like `BM_BufferPool` and `BM_PageHandle`.
+2. **record_mgr.c**  
+   Implements the Record Manager API specified in `record_mgr.h`. It handles table creation, record insertion/deletion/update, schema serialization, and tuple scanning.
+   
+3. **buffer_mgr.c / buffer_mgr.h**  
+   These files from the 2nd assignment provid the buffer pool layer used by the record manager to read and write pages. 
 
 4. **storage_mgr.c / storage_mgr.h**
-   These files from the 1st assignment provide the underlying storage layer. The buffer manager uses these functions to read pages from the disk file and write pages to the disk file.
+   These files from the 1st assignment provide the underlying storage layer. Implements the page-level file I/O operations.
 
 5. **dberror.c / dberror.h**  
    Utility files for error handling. They define error codes and provide helper functions for printing and debugging error messages.
 
-6. **test_assign2_1.c / test_assign2_2.c**  
-   Contains provided test cases for verifying the implementation of the buffer manager. The test_assign2_1.c covers the FIFO and LRU replacement strategies. The Makefile compiles these files into the test executable.
+6. **expr.c / expr.h**  
+   Implements the expression evaluation `evalExpr` used by table scans.
+   
+7. **tables.h**  
+   Provide the `Schema`, `Record` and other structures and utility functions for attribute handling.
 
-7. **test_assign2_n.c**  
-   This additional test case is provided to evaluate the LFU and CLOCK page replacement strategies. It complements the existing tests by specifically checking the correctness of these strategies under different access patterns.
+8. **test_assign3_1.c**  
+   Contains provided test cases for verifying the implementation, including creation, insertion, update, scan tests. The Makefile compiles these files into the test executable.
 
-8. **test_helper.h**  
-   A helper header file used by `test_assign2_1.c / test_assign2_2.c / test_assign2_n.c` for testing convenience. It provides macros and utility functions to simplify writing and running tests.
+9. **test_helper.h**  
+   A helper header file used by `test_assign3_1.c` for testing convenience. It provides macros and utility functions to simplify writing and running tests.
 
-9. **README.md**  
+10. **README.md**  
    This document. It describes the solution, design, and instructions for building and running the project.
-
-
 
 ## 2. Design and Implementation of Functions
 
 ### 2.1 Core Design
 
-#### Key Data Structures
+Page 0: Metadata (num tuples, first free page, and serialized schema)
+Pages 1 – N: Actual records, where each slot is 1 byte (tag) + recordSize bytes (data)
 
-1. Frame: Represents one page frame in the buffer pool.
-   It contains:
-   - pageNum: The page number of the disk page stored in this frame.
-   - data: A pointer to the page's content in memory.
-   - dirty: A boolean flag that indicates if the page has been modified.
-   - fixCount: The page's fix count, which tracks how many clients are using this page.
-   - ref: A reference field for replacement strategies, for example, a timestamp for LRU.
-   - refBit: A reference field for CLOCK strategies
+#### Key Structures
 
-2. PoolMgmtData: Stores all the management information for the entire buffer pool.
-   It contains:
-   - frames: A pointer to the array of Frame structures.
-   - numReadIO, numWriteIO: Counters for I/O operations.
-   - nextVictim: A pointer used for the FIFO strategy.
-   - clockHand: The clock hand pointer used for the CLOCK strategy.
-   - strategyData: A pointer for extra data needed by a strategy.
+typedef struct TableMgmtData {
+    BM_BufferPool *bm;
+    int numTuples;
+} TableMgmtData;
 
-#### Page Replacement Strategies
+typedef struct RM_PageInfo {
+    int freeSlots;  
+} RM_PageInfo;
 
-1. FIFO (First-In, First-Out):
-This is implemented using a circular queue concept. The `nextVictim` pointer points to the next frame that is a candidate for replacement. When a replacement is needed, we choose the first frame it points to that has a `fixCount` of 0.
+typedef struct ScanMgmtData {
+    int currentPage;
+    int currentSlot;
+    Expr *cond;
+    BM_PageHandle ph;
+} ScanMgmtData;
 
-2. LRU (Least Recently Used):
-We use a global counter `globalLRUCounter` as a timestamp. Whenever a page is accessed via `pinPage`, we update its `ref` field with the current value of this counter. When a replacement is needed, we choose the frame with the smallest `ref` value that also has a `fixCount` of 0.
-
-3. CLOCK:
-The CLOCK strategy is essentially an improved FIFO. We maintain a clock hand `clockHand` that continuously scans through the buffer's frames. If the reference bit `refBit` of a scanned frame is 1, it indicates that it has been recently accessed. We clear it to 0 which means giving it a "second chance".If the reference bit of a scanned frame is 0, it indicates that it has not been recently accessed, and we select it as the replacement target.
-
-4. LFU:
-The LFU strategy selects the frame with the fewest accesses as the replacement target. Each frame maintains a counter `ref` that records the number of times it has been accessed. When eviction is required, all frames that are not pinned (fixCount == 0) are traversed and the frame with the lowest counter is selected as the victim. If all frames are pinned, an error is returned.
-
-5. LRU-K:
-LRU-K is an improved version of LRU. Instead of considering only the most recent access, it considers the past K accesses. Each frame maintains an access history array `histories[i]`, which records the timestamps of the frame's most recent K accesses (incremented by a global counter, globalLRUCounter). In our work, we define K=2. When eviction is necessary, frames with at least K accesses are first selected. The Kth oldest access is taken from these frames. If no frame has reached K accesses, the next best option is to select the frame with the most recent access. If all frames are pinned, an error is returned.
-   
 ### 2.2 Function Descriptions
-
+TODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODO
 #### Pool Handling (init, shutdown, flush) 
 1. **initBufferPool** : To create a new buffer pool in memory, which includes a specified number of page frames.
 First, it allocates memory for a `PoolMgmtData` struct, which holds all keeping information for the pool.
