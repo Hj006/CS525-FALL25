@@ -43,8 +43,8 @@ For this assignment, the main modifications were made to the following files:
 
 ### 2.1 Core Design
 
-Page 0: Metadata (num tuples, first free page, and serialized schema)
-Pages 1 – N: Actual records, where each slot is 1 byte (tag) + recordSize bytes (data)
+- Page 0: Metadata (num tuples, first free page, and serialized schema)
+- Pages 1 – N: Actual records, where each slot is 1 byte (tag) + recordSize bytes (data)
 
 #### Key Structures
 
