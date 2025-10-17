@@ -1,4 +1,4 @@
-# CS525-F25-G02 Assignment 3 (not finished yet)
+# CS525-F25-G02 Assignment 3 
 
 ## 1. File Introduction
 
