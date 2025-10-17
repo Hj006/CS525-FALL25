@@ -92,48 +92,140 @@ It contains:
 
 #### Initialization and Shutdown 
 
-1. **initRecordManager** : Initializes global state.
+1. **initRecordManager** : Initializes the record manager module.
+Since no global state or configuration data are needed for this assignment, this function simply returns `RC_OK` to indicate successful initialization.
 
-2. **shutdownRecordManager** : Cleans up resources.
+2. **shutdownRecordManager** : Shuts down the record manager.
+This function also returns `RC_OK`, because the record manager does not allocate any global memory or background resources.
 
 #### Table Management
 
-1. **createTable** : Creates a page file, initializes metadata on page 0 (numTuples=0), and writes a serialized schema string.
-2. **openTable** : Opens the table, reads page 0, parses the schema string back, and initializes a buffer pool.
-3. **closeTable** :  Flushes and shuts down the buffer pool and frees memory.
-4. **deleteTable** : Deletes the table file.
-5. **getNumTuples** : Returns `numTuples` stored in `TableMgmtData`
+1. **createTable** : Creates a new table on disk and initializes its metadata.
+- Calls `createPageFile()` to create an empty page file.
+- Initializes a buffer pool for this file using `initBufferPool()`.
+- Writes metadata to page 0 which stores the table metadata.
+- The schema is serialized using `serializeSchema()` and written into the page.
+- Marks the page dirty, forces it to disk, unpins it, and shuts down the buffer pool.
+  
+2. **openTable** : Opens an existing table and loads its schema from disk.
+- Initializes a buffer pool for the table file.
+- Pins page 0 and reads metadata from the page content.
+- Parses the schema string using `parseSchemaString()` to rebuild the `Schema *`.
+- Allocates and fills the `RM_TableData` structure (table name, parsed schema, pointer to `TableMgmtData` containing buffer pool and tuple count)
+- Unpins page 0 and returns `RC_OK`.
+  
+3. **closeTable** :  Closes the opened table and releases its resources.
+- Flushes all dirty pages to disk with `forceFlushPool()`.
+- Shuts down the buffer pool with `shutdownBufferPool()`.
+- Frees the memory of `BM_BufferPool` and `TableMgmtData`.
+
+4. **deleteTable** : Deletes the page file representing the table using `destroyPageFile()`.
+   
+5. **getNumTuples** : Returns the number of tuples currently stored in the table, as recorded in the `numTuples` field of `TableMgmtData`.
 
 #### Record Operations
 
-1. **createRecord** : Allocates a new record and data buffer.
-2. **freeRecord** : Frees its memory.
-3. **insertRecord** : Scans pages to find an empty slot, writes record data, marks dirty, and updates RID.
-4. **deleteRecord** : Sets slot tag to '0' and clears data.
-5. **updateRecord** : Rewrites record data at its RID.
-6. **getRecord** : Fetches record data if slot tag is '1'. Includes a boundary check to avoid out-of-range access.
+1. **createRecord** : Allocates and initializes a new record structure.
+- Computes record size using `getRecordSize()`.
+- Allocates memory for the `Record` struct and its `data` buffer.
+- Initializes the record’s RID to {page=-1, slot=-1}.
+  
+2. **freeRecord** : Releases the memory allocated for a record. If the record is `NULL`, the function also safely returns `RC_OK`.
+
+3. **insertRecord** : Inserts a new record into the table.
+- Calculates slot size (slotSize = recordSize + 1). A extra one byte was added for tag.
+- Scans data pages starting from page 1, because page 0 is metadata.
+- Pins a page with `pinPage()`.
+- If the page does not exist, uses `ensureCapacity()` to allocate it and fills it with '0'.
+- Finds the first free slot ('0' or '\0').
+- Writes '1' to mark it occupied and copies record data into the slot.
+- Updates the record’s RID (page and slot).
+- Marks the page dirty, unpins it, and increments `numTuples`.
+
+4. **deleteRecord** : Deletes a record by marking its slot as empty.
+- Pins the page containing the record.
+- Calculates the record’s offset and sets the slot tag to '0'.
+- Clears the record’s data region.
+- Marks page dirty, unpins the page, and decrements `numTuples`.
+
+5. **updateRecord** : Overwrites an existing record with new data.
+- Pins the page specified by the record’s RID.
+- Calculates the byte offset within the page.
+- Performs a boundary check: if offset + slotSize > PAGE_SIZE → the record cannot be updated.
+- Writes '1' to the tag and copies the new record data.
+- Marks the page dirty and unpins it.
+
+6. **getRecord** : Retrieves a record by its RID.
+- Pins the page containing the record.
+- Computes offset = id.slot * (recordSize + 1).
+- Performs boundary check and verifies that the slot tag == '1'.
+- Copies the record data from page to memory.
+- Unpins the page and returns `RC_OK`.
 
 #### Attribute Access
 
-1. **getAttr** : Reads a field from record data based on type and offset.
-2. **setAttr** : Writes a field into record data. Both perform type-based offset calculation and handle STRING lengths.
+1. **getAttr** : Retrieves the value of a specific attribute in a record.
+- Computes byte offset for the attribute based on preceding fields and data types.
+- Reads data from the record into a new `Value` struct.
+- Handles each data type (`INT`, `FLOAT`, `BOOL`, `STRING`) separately.
+- For `STRING`, copies exactly `typeLength` characters and ensures null-termination.
+
+2. **setAttr** : Sets the value of a specific attribute in a record.
+- Computes byte offset of the target attribute.
+- Writes the new value into the record’s data buffer.
+- For `STRING`, clears the old bytes, copies new data, and appends '\0'.
  
 #### Scanning Tuples
 
-1. **startScan** : Initializes `ScanMgmtData`.
-2. **next** : Iterates through pages and slots; for each tag ‘1’ record, calls `evalExpr()` to check `cond`.
-3. **closeScan** : Unpins any pinned page and frees scan metadata.
+1. **startScan** : Starts a new sequential table scan with an optional condition.
+- Allocates a `ScanMgmtData` struct.
+- Initializes fields: currentPage = 1, currentSlot = 0, cond = cond (the filter condition), ph = empty page handle
+- Links this scan context to `RM_ScanHandle` for subsequent iteration.
+
+2. **next** : Retrieves the next record that satisfies the scan condition.
+- Pins the current page.
+- Iterates through all slots: skips empty slots (tag '0'); loads record data for valid slots; if `cond == NULL`, returns `RC_OK`; otherwise, evaluates `cond` using `evalExpr(record, schema, cond, &result)`; if the condition is true, returns the record.
+- After finishing a page, unpins it and moves to the next page.
+- Returns `RC_RM_NO_MORE_TUPLES` when all pages are scanned.
+
+3. **closeScan** : Closes a scan handle and releases its resources.
+- Unpins any pinned page.
+- Frees the `ScanMgmtData` structure.
+- Resets the handle fields to `NULL`.
+ 
+#### Schema Management
+
+1. **getRecordSize** : Computes the total size (in bytes) required to store a single record.
+- Iterates through all attributes in the schema and sums up the byte size of each type.
+- Handles `INT`, `FLOAT`, `BOOL`, and `STRING` types appropriately.
+- Returns 0 if the schema pointer is invalid.
+
+2. **createSchema** : Creates and initializes a new schema.
+- Copies all attribute names, data types, and type lengths into dynamically allocated arrays.
+- Allocates and copies key attributes if `keySize > 0`.
+- Returns a pointer to the new schema structure.
+
+3. **freeSchema** : Releases memory allocated for the schema.
+- Frees each `attrName`, and arrays of `dataTypes`, `typeLength`, and `keyAttrs`.
+- Safely returns `RC_OK` even if the input pointer is `NULL`.
+
+#### Supporting Functions
+
+1. **parseSchemaString** : Reconstructs a schema structure from a serialized string stored in page 0.
+- Reads the number of attributes and allocates arrays.
+- Parses triplets (attrName, dataType, length) separated by spaces.
+- Extracts key attributes and sets `keyAttrs` and `keySize`.
+- Returns the rebuilt `Schema *`.
+
+2. **serializeSchema** : Serializes a `Schema` into a single string for writing to page 0.
+- Concatenates attribute names, data types, and key attributes in a readable format.
+- This string is later written into the metadata page and parsed back when opening the table.
 
 ### 2.3 Error and Boundary Handling
 
 - Every major function starts with null pointer checks.
 - Functions using page handles (pinPage) add unpin calls before early returns to avoid leaks.
 - `getRecord()` and `updateRecord()` contain boundary checks (offset + slotSize > PAGE_SIZE) to avoid segfaults.
-
-### 2.4 Supporting Functions
-
-1. **parseSchemaString** : Reconstructs `Schema` from serialized metadata.
-2. **serializeSchema** : Serializes schema to a string.
 
 ## 3. Design Highlights and Improvements
 
