@@ -185,7 +185,7 @@ RC createTable(char *name, Schema *schema) {
     char *tmp = serializeSchema(schema);
     // copy one
     char *serializedSchema = tmp ? strdup(tmp) : strdup("(null)");
-    printf("[DEBUG serializedSchema ptr=%p]\n", serializedSchema);
+    // printf("[DEBUG serializedSchema ptr=%p]\n", serializedSchema);
     
     // writing metadata
     memset(ph.data, 0, PAGE_SIZE);
