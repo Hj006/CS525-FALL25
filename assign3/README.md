@@ -48,21 +48,21 @@ For this assignment, the main modifications were made to the following files:
 
 #### Key Structures
 
-typedef struct TableMgmtData {
-    BM_BufferPool *bm;
-    int numTuples;
-} TableMgmtData;
+1. TableMgmtData: Represents per-table metadata maintained by the Record Manager.
+It contains:
+   - BM_BufferPool *bm; a pointer to the buffer pool used to manage the table's pages.
+   - int numTuples; total number of tuples currently in the table (read from page 0 metadata).
 
-typedef struct RM_PageInfo {
-    int freeSlots;  
-} RM_PageInfo;
+2. RM_PageInfo : Represents information about a single data page.
+It contains:
+   - int freeSlots; the number of free record slots in that page. 
 
-typedef struct ScanMgmtData {
-    int currentPage;
-    int currentSlot;
-    Expr *cond;
-    BM_PageHandle ph;
-} ScanMgmtData;
+3. ScanMgmtData : Stores metadata for an ongoing table scan operation.
+It contains:
+   - int currentPage; current page number being scanned.
+   - int currentSlot; current slot index within the page.
+   - Expr *cond; pointer to the selection condition `(Expr *)` used by `evalExpr()`.
+   - BM_PageHandle ph; a `BM_PageHandle` struct for the currently pinned page in buffer.
 
 ### 2.2 Function Descriptions
 
