@@ -9,43 +9,59 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+Achieve Record Manager in this file 
+What can this file do?
+Create and open a table
+Insert, delete, update, and read records
+Scan a table, supporting filtering by conditions like WHERE clauses
+Define and manage schemas, which are information about the structure of a table
+*/
+
+
 // store table management info
 typedef struct TableMgmtData {
     BM_BufferPool *bm;
     int numTuples;
 } TableMgmtData;
 
+
+// record the number of free record slots in a page 
 typedef struct RM_PageInfo {
-    int freeSlots;   // number of free record slots in this page
+    int freeSlots;   
 } RM_PageInfo;
 
+
+// used to record the scanned location
 typedef struct ScanMgmtData {
     int currentPage;      // current page being scanned
     int currentSlot;      // current slot within that page
     Expr *cond;           // condition expression
     BM_PageHandle ph;     // current page handle
 } ScanMgmtData;
-// ------------------------------------------------------------
+
+
 // parseSchemaString: parse text created by serializeSchema()
 // Example:
 //   Schema with <3> attributes (id: INT, name: STRING[4], age: INT) with keys: (id)
-// ------------------------------------------------------------
 static Schema *parseSchemaString(char *str) {
+    // allocate the memory of schema
     Schema *schema = malloc(sizeof(Schema));
     memset(schema, 0, sizeof(Schema));
-
+    
+    // allocate memory for each field array of the Schema;
     schema->numAttr = 0;
     schema->attrNames = malloc(sizeof(char *) * 20);
     schema->dataTypes = malloc(sizeof(DataType) * 20);
     schema->typeLength = malloc(sizeof(int) * 20);
     schema->keyAttrs = malloc(sizeof(int) * 20);
 
-    char *p = strstr(str, "with <");
+    char *p = strstr(str, "with <"); // based on example, we find : 'with <', then we find: 3
     if (!p) return NULL;
     p += 6;
     schema->numAttr = atoi(p);
 
-    p = strchr(p, '(');
+    p = strchr(p, '('); // find the first '('
     if (!p) return NULL;
     p++;
 
@@ -55,12 +71,13 @@ static Schema *parseSchemaString(char *str) {
         memset(attrName, 0, sizeof(attrName));
         memset(typeStr, 0, sizeof(typeStr));
 
-        // Parse "name: TYPE" or "name: STRING[xx]"
+        // Parse "id: TYPE" or "name: STRING[4]"
         if (sscanf(p, "%[^:]: %[^,)]", attrName, typeStr) != 2)
             break;
 
         schema->attrNames[i] = strdup(attrName);  // copy
-
+        
+        // Parse and store in schema->typeLength[i]
         if (strncmp(typeStr, "INT", 3) == 0)
             schema->dataTypes[i] = DT_INT;
         else if (strncmp(typeStr, "FLOAT", 5) == 0)
@@ -96,6 +113,7 @@ void *calloc(size_t n, size_t s) {
 }
 
 
+
 // Table & Record Manager
 
 
@@ -105,13 +123,13 @@ RC initRecordManager (void *mgmtData) {
     return RC_OK;
 }
 
+
 RC shutdownRecordManager () {
-    // Close all open tables 
-    // Release globally allocated management structures 
-    // 
-    // Return success
+    // close all open tables 
+    // release globally allocated management structures 
     return RC_OK;
 }
+
 
 RC createTable(char *name, Schema *schema) {
     /*
@@ -130,10 +148,12 @@ RC createTable(char *name, Schema *schema) {
     rc = createPageFile(name);
     if (rc != RC_OK) return rc;
 
+    // initialize the buffer pool
     BM_BufferPool bm;
     rc = initBufferPool(&bm, name, 3, RS_LRU, NULL);
     if (rc != RC_OK) return rc;
-
+    
+    // page 0 was used to store metadata
     BM_PageHandle ph;
     rc = pinPage(&bm, &ph, 0);
     if (rc != RC_OK) {
@@ -150,20 +170,24 @@ RC createTable(char *name, Schema *schema) {
         memset(dummy, 0, 128);
         free(dummy);
     }
-
+    /*
     printf("[DEBUG before serializeSchema] keySize=%d keyAttrs=%p\n",
            schema->keySize, schema->keyAttrs);
     for (int i = 0; i < schema->keySize; i++) {
         printf("  keyAttrs[%d]=%d\n", i, schema->keyAttrs[i]);
     }
+    */
     fflush(stdout);
+    
 
+
+    // serialization Schema
     char *tmp = serializeSchema(schema);
-
     // copy one
     char *serializedSchema = tmp ? strdup(tmp) : strdup("(null)");
     printf("[DEBUG serializedSchema ptr=%p]\n", serializedSchema);
-
+    
+    // writing metadata
     memset(ph.data, 0, PAGE_SIZE);
     sprintf(ph.data, "%d\n%d\n%s\n", numTuples, firstFreePage, serializedSchema);
 
@@ -206,6 +230,15 @@ RC openTable (RM_TableData *rel, char *name) {
     char *pageData = ph->data;
     int numTuples = atoi(pageData);
 
+    /*
+    page 0 looks like:
+    <numTuples>\n
+    <firstFreePage>\n
+    <serializedSchema>\n
+    
+    The table structure is defined in the third and subsequent lines, so we skip the first two lines below.
+    */
+
     // skip line 1
     char *pos = strchr(pageData, '\n');
     if (pos == NULL) return RC_FILE_NOT_FOUND;
@@ -228,8 +261,6 @@ RC openTable (RM_TableData *rel, char *name) {
     rel->name = strdup(name);
     rel->schema = schema;
 
-
-
     TableMgmtData *mgmt = (TableMgmtData *) malloc(sizeof(TableMgmtData));
     mgmt->bm = bm;
     mgmt->numTuples = numTuples;
@@ -242,15 +273,9 @@ RC openTable (RM_TableData *rel, char *name) {
 }
 
 
-
 RC closeTable (RM_TableData *rel) {
     if (rel == NULL || rel->mgmtData == NULL)
         return RC_FILE_NOT_FOUND;
-
-    typedef struct TableMgmtData {
-        BM_BufferPool *bm;
-        int numTuples;
-    } TableMgmtData;
 
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = mgmt->bm;
@@ -268,9 +293,11 @@ RC closeTable (RM_TableData *rel) {
     return RC_OK;
 }
 
+
 RC deleteTable (char *name) {
     return destroyPageFile(name);
 }
+
 
 int getNumTuples (RM_TableData *rel) {
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
@@ -279,7 +306,11 @@ int getNumTuples (RM_TableData *rel) {
 
 
 // Record 
-
+/*
+Page's structure:
+| Slot 0 | Slot 1 | Slot 2 | Slot 3 | ...          |
+| [tag][record_data][tag][record_data]...          |
+*/
 
 RC insertRecord (RM_TableData *rel, Record *record) {
     // insert one record into the table
@@ -303,8 +334,8 @@ RC insertRecord (RM_TableData *rel, Record *record) {
         //printf("[insertRecord] currently on page=%d\n", pageNum);
 
         rc = pinPage(bm, &ph, pageNum);
-        if (rc != RC_OK) { // Not enough, expand
-            // if page not exists, create new empty page
+        if (rc != RC_OK) { // if page not exists, create new empty page
+            
             SM_FileHandle fh;
             openPageFile(rel->name, &fh);
             ensureCapacity(pageNum + 1, &fh);
@@ -356,11 +387,11 @@ RC insertRecord (RM_TableData *rel, Record *record) {
 }
 
 RC deleteRecord (RM_TableData *rel, RID id) {
+    // delete record by marking slot empty
+
     if (rel == NULL || rel->mgmtData == NULL)
         return RC_FILE_NOT_FOUND;
     
-    // delete record by marking slot empty
-
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = mgmt->bm;
     BM_PageHandle ph;
@@ -368,6 +399,7 @@ RC deleteRecord (RM_TableData *rel, RID id) {
     RC rc = pinPage(bm, &ph, id.page);
     if (rc != RC_OK) return rc;
 
+    // calculate the offset
     int recordSize = getRecordSize(rel->schema);
     int slotSize = recordSize + 1;
     int offset = id.slot * slotSize;
@@ -389,7 +421,8 @@ RC updateRecord (RM_TableData *rel, Record *record) {
     TableMgmtData *mgmt = (TableMgmtData *) rel->mgmtData;
     BM_BufferPool *bm = mgmt->bm;
     BM_PageHandle ph;
-
+    
+    // load the target page and calculate the position
     RC rc = pinPage(bm, &ph, record->id.page);
     if (rc != RC_OK) return rc;
 
@@ -415,6 +448,7 @@ RC updateRecord (RM_TableData *rel, Record *record) {
 RC getRecord (RM_TableData *rel, RID id, Record *record) {
     // get record data by RID
     // mapping to SELECT * FROM table WHERE RID = id
+
     if (record == NULL || record->data == NULL)
         return RC_RM_UNKOWN_DATATYPE;
     // check table handle validity
@@ -489,24 +523,18 @@ RC startScan (RM_TableData *rel, RM_ScanHandle *scan, Expr *cond) {
 RC next (RM_ScanHandle *scan, Record *record) {
 
     // fetch next record matching the scan condition
-/*
-Loop through all pages;
+    /*
+    progress:
+    Loop through all pages;
+    Scan all slots in each page;
+    If the slot is not empty:
+    Read the data as a record
+    If cond == NULL → Return immediately;
+    Otherwise, use evalExpr() to check if the condition is satisfied;
+    If satisfied, return;
+    Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
+    */
 
-Scan all slots in each page;
-
-If the slot is not empty:
-
-Read the data as a record
-
-If cond == NULL → Return immediately;
-
-Otherwise, use evalExpr() to check if the condition is satisfied;
-
-If satisfied, return;
-
-Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
-
-*/
     if (scan == NULL || scan->rel == NULL || scan->mgmtData == NULL)
         return RC_FILE_NOT_FOUND;
     
@@ -515,23 +543,25 @@ Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
     BM_BufferPool *bm = tableMgmt->bm;
     Schema *schema = rel->schema;
     ScanMgmtData *scanData = (ScanMgmtData *) scan->mgmtData;
-
+    
+    // calculate the maximum number of records that can be placed on each page
     int recordSize = getRecordSize(schema);
     int slotSize = recordSize + 1;
     int recordsPerPage = PAGE_SIZE / slotSize;
     Value *result = NULL;
     RC rc;
-
+    
+    // preventing infinite loops
     int totalPages = (tableMgmt->numTuples + recordsPerPage - 1) / recordsPerPage;
     if (totalPages == 0) totalPages = 1;
 
-    while (scanData->currentPage <= totalPages) {
+    while (scanData->currentPage <= totalPages) { // page layer
         rc = pinPage(bm, &scanData->ph, scanData->currentPage);
         if (rc != RC_OK) return rc;
 
         char *data = scanData->ph.data;
 
-        for (; scanData->currentSlot < recordsPerPage; scanData->currentSlot++) {
+        for (; scanData->currentSlot < recordsPerPage; scanData->currentSlot++) { // slot layer
             int offset = scanData->currentSlot * slotSize;
             if (data[offset] != '1') continue; // skip empty slot
 
@@ -539,13 +569,13 @@ Return RC_RM_NO_MORE_TUPLES after scanning all the slots.
             record->id.slot = scanData->currentSlot;
             memcpy(record->data, data + offset + 1, recordSize);
 
-            if (scanData->cond == NULL) {
+            if (scanData->cond == NULL) { // no conditions
                 scanData->currentSlot++;
                 unpinPage(bm, &scanData->ph);
                 return RC_OK;
             }
 
-            rc = evalExpr(record, schema, scanData->cond, &result);
+            rc = evalExpr(record, schema, scanData->cond, &result); // evalExpr() evaluates a conditional expression
             if (rc == RC_OK && result != NULL && result->v.boolV == TRUE) {
                 freeVal(result);
                 scanData->currentSlot++;
@@ -571,7 +601,7 @@ RC closeScan (RM_ScanHandle *scan) {
     ScanMgmtData *scanData = (ScanMgmtData *) scan->mgmtData;
     TableMgmtData *tableMgmt = (TableMgmtData *) scan->rel->mgmtData;
 
-    if (scanData->ph.data != NULL)
+    if (scanData->ph.data != NULL) // preventing null pointers
         unpinPage(tableMgmt->bm, &scanData->ph);
 
     free(scanData);
@@ -585,13 +615,14 @@ RC closeScan (RM_ScanHandle *scan) {
 
 
 int getRecordSize (Schema *schema) {
-    // Return 0 if schema is invalid
+    // return 0 if schema is invalid
     if (schema == NULL || schema->dataTypes == NULL || schema->typeLength == NULL)
         return 0;
     
     // calculate total number of bytes needed to store one record
     int size = 0;
-
+    
+    // add the corresponding number of bytes according to the type
     for (int i = 0; i < schema->numAttr; i++) {
         switch (schema->dataTypes[i]) {
             case DT_INT:
@@ -614,7 +645,7 @@ int getRecordSize (Schema *schema) {
 
 Schema *createSchema (int numAttr, char **attrNames, DataType *dataTypes,
                       int *typeLength, int keySize, int *keys) {
-    // Return NULL if input parameters are invalid
+    // return NULL if input parameters are invalid
     if (numAttr <= 0 || attrNames == NULL || dataTypes == NULL || typeLength == NULL)
         return NULL;    //schema creation failed
     
@@ -706,7 +737,7 @@ RC freeRecord (Record *record) {
 }
 
 RC getAttr (Record *record, Schema *schema, int attrNum, Value **value) {
-    // Validate input
+    // validate input
     if (record == NULL || record->data == NULL || schema == NULL)
         return RC_FILE_NOT_FOUND;
     
