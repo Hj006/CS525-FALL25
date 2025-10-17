@@ -21,19 +21,19 @@ For this assignment, the main modifications were made to the following files:
 4. **storage_mgr.c / storage_mgr.h**
    These files from the 1st assignment provide the underlying storage layer. Implements the page-level file I/O operations.
 
-6. **dberror.c / dberror.h**  
+5. **dberror.c / dberror.h**  
    Utility files for error handling. They define error codes and provide helper functions for printing and debugging error messages.
 
-7. **expr.c / expr.h**  
+6. **expr.c / expr.h**  
    Implements the expression evaluation `evalExpr` used by table scans.
    
-8. **tables.h**  
+7. **tables.h**  
    Provide the `Schema`, `Record` and other structures and utility functions for attribute handling.
 
-9. **test_assign3_1.c**  
+8. **test_assign3_1.c**  
    Contains provided test cases for verifying the implementation, including creation, insertion, update, scan tests. The Makefile compiles these files into the test executable.
 
-10. **test_helper.h**  
+9. **test_helper.h**  
    A helper header file used by `test_assign3_1.c` for testing convenience. It provides macros and utility functions to simplify writing and running tests.
 
 11. **README.md**  
