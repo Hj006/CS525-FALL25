@@ -7,10 +7,13 @@ For this assignment, the main modifications were made to the following files:
 - **record_mgr.c**  
 - **README.md**
 
+### Statement
+We only completed the basic requirements and did not implement the extra credit parts.
+
 ### Overview of Files in the Project
 
 1. **Makefile**  
-   Used to compile the project. It builds the test binaries (`test_assign3_1`) from their respective `.c` files, together with the common sources. It also provides targets for compilation, execution, and cleanup.
+   Used to compile the project. It builds the test binaries (`test_assign3_1`, `test_expr`) from their respective `.c` files together with the common sources. It also provides targets for compilation, execution, and cleanup.
 
 2. **record_mgr.c**  
    Implements the Record Manager API specified in `record_mgr.h`. It handles table creation, record insertion/deletion/update, schema serialization, and tuple scanning.
@@ -30,23 +33,44 @@ For this assignment, the main modifications were made to the following files:
 7. **tables.h**  
    Provide the `Schema`, `Record` and other structures and utility functions for attribute handling.
 
-8. **test_assign3_1.c**  
-   Contains provided test cases for verifying the implementation, including creation, insertion, update, scan tests. The Makefile compiles these files into the test executable.
+8. **rm_serializer.c**
+   Implements serialization functions declared in `tables.h`, converting table schemas, records, and values into readable string representations for debugging and testing purposes.
 
-9. **test_helper.h**  
-   A helper header file used by `test_assign3_1.c` for testing convenience. It provides macros and utility functions to simplify writing and running tests.
+9. **test_expr.c**
+   Contains test cases for verifying expression evaluation functions defined in `expr.c`. It checks comparison, boolean, and nested operator correctness.
+   The **Makefile** compiles this file into a separate test executable (`test_expr`) used to validate the expression module independently.
 
-11. **README.md**  
+10. **test_assign3_1.c**
+   Contains provided test cases for verifying the record manager implementation, including creation, insertion, update, and scan tests. The Makefile compiles this into the main test executable.
+
+11. **test_helper.h**
+   A helper header file used by test programs for testing convenience. It provides macros and utility functions to simplify writing and running tests.
+
+12. **README.md**
    This document. It describes the solution, design, and instructions for building and running the project.
 
 ## 2. Design and Implementation of Functions
 
 ### 2.1 Core Design
 
-- Page 0: Metadata (num tuples, first free page, and serialized schema)
-- Pages 1 – N: Actual records, where each slot is 1 byte (tag) + recordSize bytes (data)
+The Record Manager is built on top of the Buffer Manager and Storage Manager layers. It utilizes these two components to manage tables, pages, and records efficiently.
 
-#### Key Structures
+#### Page Layout
+- **Page 0** — Stores table metadata:  
+  number of tuples, first free page index, and the serialized schema.  
+- **Pages 1–N** — Store actual records.  
+  Each slot in a page contains a **1-byte tag** (`'1'` = valid, `'0'` = free) followed by the record data.
+
+#### Functional Overview
+The Record Manager supports the following operations:
+- Creating and opening tables  
+- Inserting, deleting, updating, and reading records  
+- Scanning tables with optional conditions (using `evalExpr()`)
+
+Each table is represented by an `RM_TableData` structure that stores the schema and a pointer to its management data (`TableMgmtData`).  
+Scanning operations are handled through a `ScanMgmtData` structure, which keeps track of the current page, slot, and selection condition during iteration.
+
+#### Defined Structures
 
 1. TableMgmtData: Represents per-table metadata maintained by the Record Manager.
 It contains:
@@ -110,8 +134,21 @@ It contains:
 
 1. **parseSchemaString** : Reconstructs `Schema` from serialized metadata.
 2. **serializeSchema** : Serializes schema to a string.
+
+## 3. Design Highlights and Improvements
+
+1. **Safe Pin/Unpin Mechanism** – Every `pinPage()` has a matching `unpinPage()` even in error branches.
+
+2. **Record Tagging** – Each slot uses a 1-byte flag ('1' = valid, '0' = free).
+
+3. **Schema Serialization** – Schema is stored as a single string on page 0 and reconstructed with `strtok()`.
+
+4. **Full Test Compatibility** – All tests from `test_assign3_1.c` and `test_expr.c` pass.
+
+5. **Robust Boundary Checks** – Prevent page overflow and leakage when invalid RID is given.
+
    
-## 3. How to Build and Run
+## 4. How to Build and Run
 
 ### Prerequisites
 - **Linux / macOS**  
@@ -123,7 +160,7 @@ It contains:
 
   Example of using WSL and running `make` inside WSL:  
 
-  !
+   ![Figure 1. make](./images/make.png)
 
 ### Build Instructions
 1. Open a terminal (Linux/macOS) or a WSL terminal (Windows).
@@ -138,21 +175,32 @@ It contains:
    make
    ```
 
-   This compiles the source files and generates the executable **`test_assign3_1`**.
+   This compiles all source files and generates **two executables**:
+
+   * **`test_assign3_1`** – tests the Record Manager implementation.
+   * **`test_expr`** – tests the Expression Evaluation module.
 
 ### Run Tests:
-Builds the project and executes the test cases.
+Builds the project and executes the test cases. You can run either the Record Manager tests or the Expression tests.
 
 #### Using make
-Run the main test case:
+Run the Record Manager test:
    ```bash
    make run
    ```
+
+Run the Expression Evaluation test:
+
+```bash
+make run_expr
+```
+
 #### Run executables directly
-Run test:
+You can also run the compiled executables manually:
 
    ```bash
-   ./test_assign3_1
+   ./test_assign3_1    # Record Manager tests
+   ./test_expr         # Expression Evaluation tests
    ```
 
 ### Additional Targets
@@ -163,33 +211,21 @@ Run test:
   make clean
   ```
 
-## 4. Design Highlights and Improvements
-
-1. **Safe Pin/Unpin Mechanism** – Every `pinPage()` has a matching `unpinPage()` even in error branches.
-
-2. **Record Tagging** – Each slot uses a 1-byte flag ('1' = valid, '0' = free).
-
-3. **Schema Serialization** – Schema is stored as a single string on page 0 and reconstructed with `strtok()`.
-
-4. **Full Test Compatibility** – All tests from `test_assign3_1.c` pass.
-
-5. **Robust Boundary Checks** – Prevent page overflow and leakage when invalid RID is given.
 
 ## 5. Demonstration of Execution
 
 This section demonstrates how to build, run, and clean the project.  
-All commands are executed inside the project directory (`/CS525/CS525-F25-G02/assign2`) using WSL.
+All commands are executed inside the project directory (`/CS525/CS525-F25-G02/assign3`) using WSL.
 
 ### Step 1: Navigate to the project folder
-Before compiling, make sure you are inside the `assign2` folder of the repository.
+Before compiling, make sure you are inside the `assign3` folder of the repository.
 
 ```bash
 cd CS525/
 cd CS525-F25-G02/
 cd assign3
 ```
-!
-
+![Figure 2. Navigate into the `assign3` folder before building.](./images/navigate.png)
 
 ### Step 2: Build the project with `make`
 
@@ -198,10 +234,9 @@ Run the following command to compile the source code:
 ```bash
 make
 ```
-This will build all object files (`.o`) and generate executables for the test cases (`test_assign3_1`).
+This will build all object files (`.o`) and generate executables for the test cases (`test_assign3_1` and `test_expr`).
 
-!
-
+![Figure 3. Compiling the project using `make`.](./images/make.png)
 
 ### Step 3: Execute the test programs using the run targets
 
@@ -213,12 +248,15 @@ There are **two ways** to run the tests:
 
    ```bash
    make run    # runs test_assign3_1
+   make run_expr  # runs Expression Evaluation tests
    ```
 
    <p align="left">
-      <img src="./images/makerun.png" alt="Figure 3. Running tests using make run1, make run2, and make runn." width="500"/>
+      <img src="./images/makerun.png" alt="Figure 4. Running tests using make run." width="600"/>
    </p>
-
+   <p align="left">
+      <img src="./images/makerunexpr.png" alt="Figure 5. Running tests using run_expr." width="600"/>
+   </p>
 
    #### Option B. Run Executables Directly
 
@@ -226,10 +264,11 @@ There are **two ways** to run the tests:
 
    ```bash
    ./test_assign3_1
+   ./test_expr 
    ```
+   ![Figure 6. Running tests directly via compiled executables.](./images/t1.png)
 
-   !
-
+   ![Figure 7. Running tests directly via compiled executables.](./images/t2.png)
 
 ### Step 4: Clean build files
 
@@ -240,15 +279,21 @@ make clean
 ```
 This deletes all object files and executables so you can rebuild from scratch.
 
-!
 
+![Figure 8. Cleaning up build files with `make clean`.](./images/makeclean.png)
 
+### Demonstration of execution output
+The final runtime output is shown here, as it was not fully displayed in the previous sections due to length.
 
-## 5. Video Link
+![Figure 9. Output of make run.](./images/o1.png)
 
-  [The link to the recorded assignment 3 demo video. ](https://www.loom.com/share/)
+![Figure 10. Output of make run_expr.](./images/makerunexpr.png)
 
-## 6. Contact Authors
+## 6. Video Link
+
+  [The link to the recorded assignment 3 demo video. ](https://www.loom.com/share/aff3bfd48911417286341909d68323d0?sid=21abcf1c-b1af-4094-b701-1506b70c9a0b)
+
+## 7. Contact Authors
 
 * **Hongyi Jiang** (A20506636)
 * **Naicheng Wei** (A20278475)
