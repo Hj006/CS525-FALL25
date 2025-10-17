@@ -109,7 +109,7 @@ It contains:
 ### 2.4 Supporting Functions
 
 1. **parseSchemaString** : Reconstructs `Schema` from serialized metadata.
-2. **serializeSchema** : Defined in rm_serializer.c. Generates the schema string for page 0. **TODOTODOTODOTODO**
+2. **serializeSchema** : Serializes schema to a string.
    
 ## 3. How to Build and Run
 
