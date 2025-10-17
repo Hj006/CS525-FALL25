@@ -26,47 +26,75 @@ typedef struct ScanMgmtData {
     BM_PageHandle ph;     // current page handle
 } ScanMgmtData;
 // ------------------------------------------------------------
-// Helper: parse schema string from page 0 metadata
+// parseSchemaString: parse text created by serializeSchema()
+// Example:
+//   Schema with <3> attributes (id: INT, name: STRING[4], age: INT) with keys: (id)
 // ------------------------------------------------------------
-static Schema *parseSchemaString(char *schemaStr) {
-    if (schemaStr == NULL) return NULL;
+static Schema *parseSchemaString(char *str) {
+    Schema *schema = malloc(sizeof(Schema));
+    memset(schema, 0, sizeof(Schema));
 
-    Schema *schema = (Schema *) malloc(sizeof(Schema));
-    char *token = strtok(schemaStr, " ");
-    if (token == NULL) return NULL;
+    schema->numAttr = 0;
+    schema->attrNames = malloc(sizeof(char *) * 20);
+    schema->dataTypes = malloc(sizeof(DataType) * 20);
+    schema->typeLength = malloc(sizeof(int) * 20);
+    schema->keyAttrs = malloc(sizeof(int) * 20);
 
-    // Parse number of attributes
-    schema->numAttr = atoi(token);
+    char *p = strstr(str, "with <");
+    if (!p) return NULL;
+    p += 6;
+    schema->numAttr = atoi(p);
 
-    // Allocate arrays
-    schema->attrNames = (char **) malloc(sizeof(char *) * schema->numAttr);
-    schema->dataTypes = (DataType *) malloc(sizeof(DataType) * schema->numAttr);
-    schema->typeLength = (int *) malloc(sizeof(int) * schema->numAttr);
+    p = strchr(p, '(');
+    if (!p) return NULL;
+    p++;
 
-    // Parse attribute info: name type len
     for (int i = 0; i < schema->numAttr; i++) {
-        token = strtok(NULL, " ");
-        schema->attrNames[i] = strdup(token);
+        char attrName[100], typeStr[100];
+        int len = 0;
+        memset(attrName, 0, sizeof(attrName));
+        memset(typeStr, 0, sizeof(typeStr));
 
-        token = strtok(NULL, " ");
-        schema->dataTypes[i] = (DataType) atoi(token);
+        // Parse "name: TYPE" or "name: STRING[xx]"
+        if (sscanf(p, "%[^:]: %[^,)]", attrName, typeStr) != 2)
+            break;
 
-        token = strtok(NULL, " ");
-        schema->typeLength[i] = atoi(token);
+        schema->attrNames[i] = strdup(attrName);  // copy
+
+        if (strncmp(typeStr, "INT", 3) == 0)
+            schema->dataTypes[i] = DT_INT;
+        else if (strncmp(typeStr, "FLOAT", 5) == 0)
+            schema->dataTypes[i] = DT_FLOAT;
+        else if (strncmp(typeStr, "BOOL", 4) == 0)
+            schema->dataTypes[i] = DT_BOOL;
+        else if (strncmp(typeStr, "STRING", 6) == 0) {
+            sscanf(typeStr, "STRING[%d]", &len);
+            schema->dataTypes[i] = DT_STRING;
+        }
+        schema->typeLength[i] = len;
+
+        // jump to the next
+        p = strchr(p, ',');
+        if (!p) break;
+        p++;
     }
 
-    // Parse key info
-    token = strtok(NULL, " ");
-    schema->keySize = atoi(token);
-    schema->keyAttrs = (int *) malloc(sizeof(int) * schema->keySize);
-
-    for (int i = 0; i < schema->keySize; i++) {
-        token = strtok(NULL, " ");
-        schema->keyAttrs[i] = atoi(token);
-    }
+    // set key
+    schema->keySize = 1;
+    schema->keyAttrs[0] = 0;
 
     return schema;
 }
+
+
+// in rm_serializer.c, MAKE_VARSTRING() calls calloc(100, 0),
+// which allocates zero bytes. this causes a segmentation fault on most systems (glibc >= 2.30).
+// This replacement ensures calloc() always allocates at least 1 byte,
+void *calloc(size_t n, size_t s) {
+    if (s == 0) s = 1;          // ensure at least 1 byte per element
+    return malloc(n * s);       // allocate a contiguous block manually
+}
+
 
 // Table & Record Manager
 
@@ -85,24 +113,27 @@ RC shutdownRecordManager () {
     return RC_OK;
 }
 
-RC createTable (char *name, Schema *schema) {
-    // create a new table and write schema information
-    // mapping to CREATE TABLE
-    // page 0: stores metadata, the schema, total number of records, and the first free page number
-    // pages 1-N: store the actual record data.
-
+RC createTable(char *name, Schema *schema) {
+    /*
+    debug code
+    printf("[DEBUG createTable] schema=%p numAttr=%d\n", schema, schema->numAttr);
+    for (int i = 0; i < schema->numAttr; i++) {
+        printf("  attr[%d] name=%p (%s) type=%d len=%d\n",
+            i,
+            schema->attrNames ? schema->attrNames[i] : NULL,
+            schema->attrNames && schema->attrNames[i] ? schema->attrNames[i] : "(null)",
+            schema->dataTypes ? schema->dataTypes[i] : -1,
+            schema->typeLength ? schema->typeLength[i] : -1);
+    }
+    */
     RC rc;
-
-    // create pagefile
     rc = createPageFile(name);
     if (rc != RC_OK) return rc;
 
-    // initialize Buffer Pool
     BM_BufferPool bm;
     rc = initBufferPool(&bm, name, 3, RS_LRU, NULL);
     if (rc != RC_OK) return rc;
 
-    // this is page 0
     BM_PageHandle ph;
     rc = pinPage(&bm, &ph, 0);
     if (rc != RC_OK) {
@@ -110,33 +141,42 @@ RC createTable (char *name, Schema *schema) {
         return rc;
     }
 
-    // information in page 0
-    int numTuples = 0;          // total number of records in the table
-    int firstFreePage = -1;     // first free page number, -1 means none
-    char *serializedSchema = serializeSchema(schema);
+    int numTuples = 0;
+    int firstFreePage = -1;
 
-    // clear the page
+    // force allocation and freeing of memory several times to make the heap pointer cross the bad area
+    for (int i = 0; i < 10; i++) {
+        void *dummy = malloc(128);
+        memset(dummy, 0, 128);
+        free(dummy);
+    }
+
+    printf("[DEBUG before serializeSchema] keySize=%d keyAttrs=%p\n",
+           schema->keySize, schema->keyAttrs);
+    for (int i = 0; i < schema->keySize; i++) {
+        printf("  keyAttrs[%d]=%d\n", i, schema->keyAttrs[i]);
+    }
+    fflush(stdout);
+
+    char *tmp = serializeSchema(schema);
+
+    // copy one
+    char *serializedSchema = tmp ? strdup(tmp) : strdup("(null)");
+    printf("[DEBUG serializedSchema ptr=%p]\n", serializedSchema);
+
     memset(ph.data, 0, PAGE_SIZE);
+    sprintf(ph.data, "%d\n%d\n%s\n", numTuples, firstFreePage, serializedSchema);
 
-    // write table metadata into page 0
-    sprintf(ph.data, "%d\n%d\n%s\n", numTuples, firstFreePage, serializedSchema); 
-    // line 1: number of tuples
-    // line 2: first free page
-    // line 3+: schema info
-    // Debug print 
-    //printf("[createTable] Writing metadata:\n%s\n", ph.data);
-    free(serializedSchema);
-
-    // mark page dirty, write back to disk, unpin
     markDirty(&bm, &ph);
     forcePage(&bm, &ph);
     unpinPage(&bm, &ph);
 
-    // flush all pages and close buffer pool
     forceFlushPool(&bm);
     shutdownBufferPool(&bm);
 
+    free(serializedSchema);
     return RC_OK;
+
 }
 
 
@@ -179,7 +219,7 @@ RC openTable (RM_TableData *rel, char *name) {
     //Schema *schema = parseSchemaString(pos);
     char *schemaCopy = strdup(pos);
     Schema *schema = parseSchemaString(schemaCopy);
-    free(schemaCopy);
+    //free(schemaCopy);
 
     if (schema == NULL)
         return RC_RM_UNKOWN_DATATYPE;
@@ -200,6 +240,8 @@ RC openTable (RM_TableData *rel, char *name) {
 
     return RC_OK;
 }
+
+
 
 RC closeTable (RM_TableData *rel) {
     if (rel == NULL || rel->mgmtData == NULL)
