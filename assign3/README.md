@@ -36,7 +36,7 @@ For this assignment, the main modifications were made to the following files:
 9. **test_helper.h**  
    A helper header file used by `test_assign3_1.c` for testing convenience. It provides macros and utility functions to simplify writing and running tests.
 
-10. **README.md**  
+11. **README.md**  
    This document. It describes the solution, design, and instructions for building and running the project.
 
 ## 2. Design and Implementation of Functions
