@@ -217,10 +217,6 @@ This function also returns `RC_OK`, because the record manager does not allocate
 - Extracts key attributes and sets `keyAttrs` and `keySize`.
 - Returns the rebuilt `Schema *`.
 
-2. **serializeSchema** : Serializes a `Schema` into a single string for writing to page 0.
-- Concatenates attribute names, data types, and key attributes in a readable format.
-- This string is later written into the metadata page and parsed back when opening the table.
-
 ### 2.3 Error and Boundary Handling
 
 - Every major function starts with null pointer checks.
