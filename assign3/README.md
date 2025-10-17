@@ -43,8 +43,8 @@ For this assignment, the main modifications were made to the following files:
 
 ### 2.1 Core Design
 
-Page 0: Metadata (num tuples, first free page, and serialized schema)
-Pages 1 – N: Actual records, where each slot is 1 byte (tag) + recordSize bytes (data)
+- Page 0: Metadata (num tuples, first free page, and serialized schema)
+- Pages 1 – N: Actual records, where each slot is 1 byte (tag) + recordSize bytes (data)
 
 #### Key Structures
 
@@ -65,79 +65,52 @@ typedef struct ScanMgmtData {
 } ScanMgmtData;
 
 ### 2.2 Function Descriptions
-TODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODO
-#### Pool Handling (init, shutdown, flush) 
-1. **initBufferPool** : To create a new buffer pool in memory, which includes a specified number of page frames.
-First, it allocates memory for a `PoolMgmtData` struct, which holds all keeping information for the pool.
-Next, it allocates an array of `Frame` structs, one for each page frame in the pool. Each frame is initialized with default values: `pageNum` is set to `NO_PAGE`, `dirty` is `false`, `fixCount` is 0, and memory is allocated for the page data itself.
-Finally, it sets up the `BM_BufferPool` handle passed by the page file name, number of pages, and chosen replacement strategy.
 
-2. **shutdownBufferPool** : To safely destroy the buffer pool and free resources. It writes dirty pages back to the disk file. This is similar to calling `forceFlushPool`. Then, it frees all allocated memory, including the data buffer for each frame, the array of frames, and the `PoolMgmtData` struct itself.
+#### Initialization and Shutdown 
 
-3. **forceFlushPool** : To write all dirty pages from the buffer pool to disk. It iterates through all frames and writes the content back to the page file for any frame that is dirty and not pinned.
+1. **initRecordManager** : Initializes global state.
 
-#### Page Access (pin, unpin, mark, force)
-1. **pinPage** : To request a page from the page file and "pin" it in a frame in memory.
-- First, it checks whether the requested page is already present in the buffer pool.
-  - If yes, it increments the frame's `fixCount` and updates the replacement information (for example, reference counter, reference bit, or access history depending on the chosen strategy).
-- If the page is not already in memory, the buffer manager must select a frame for replacement.
-  - If there are still empty frames (`pageNum == NO_PAGE`), it uses one directly.
-  - Otherwise, it applies the current replacement strategy (FIFO, LRU, CLOCK, LFU, or LRU-K) to select a victim frame.
-- Before replacing, if the victim frame contains a dirty page, its content is written back to disk.
-- Then, the new page is read from disk into the victim frame, and the metadata is updated (`pageNum`, `fixCount`, `dirty`, and replacement info).
-- Finally, the `BM_PageHandle` is updated so the caller can access the page's data.
+2. **shutdownRecordManager** : Cleans up resources.
 
+#### Table Management
 
+1. **createTable** : Creates a page file, initializes metadata on page 0 (numTuples=0), and writes a serialized schema string.
+2. **openTable** : Opens the table, reads page 0, parses the schema string back, and initializes a buffer pool.
+3. **closeTable** :  Flushes and shuts down the buffer pool and frees memory.
+4. **deleteTable** : Deletes the table file.
+5. **getNumTuples** : Returns `numTuples` stored in `TableMgmtData`
 
-2. **unpinPage** : To notify the buffer manager that the usage is finished with a page. It finds the corresponding frame and decrements its `fixCount` by one. If the page is not in the pool or its `fixCount` is already 0, an error is returned.
+#### Record Operations
 
-3. **markDirty** :  To mark a page in the buffer as having been modified. It finds the corresponding frame and sets its `dirty flag` to true. If the page is not found in the buffer pool, it returns an error.
+1. **createRecord** : Allocates a new record and data buffer.
+2. **freeRecord** : Frees its memory.
+3. **insertRecord** : Scans pages to find an empty slot, writes record data, marks dirty, and updates RID.
+4. **deleteRecord** : Sets slot tag to '0' and clears data.
+5. **updateRecord** : Rewrites record data at its RID.
+6. **getRecord** : Fetches record data if slot tag is '1'. Includes a boundary check to avoid out-of-range access.
 
-4. **forcePage** : To write the current content of a specific page back to the disk. If the page is not in the pool, or the buffer pool is not initialized, it returns an error.
+#### Attribute Access
 
+1. **getAttr** : Reads a field from record data based on type and offset.
+2. **setAttr** : Writes a field into record data. Both perform type-based offset calculation and handle STRING lengths.
+ 
+#### Scanning Tuples
 
-#### Statistics (get functions)
-1. **getFrameContents** : To get an array of page numbers representing the content of the buffer pool. It returns an array where the i-th element is the page number stored in the i-th frame.
+1. **startScan** : Initializes `ScanMgmtData`.
+2. **next** : Iterates through pages and slots; for each tag ‘1’ record, calls `evalExpr()` to check `cond`.
+3. **closeScan** : Unpins any pinned page and frees scan metadata.
 
-2. **getDirtyFlags** : To get an array of booleans. The i-th element is true if the page in the i-th frame is dirty.
+### 2.3 Error and Boundary Handling
 
-3. **getFixCounts** : To get an array of integers. The i-th element is the `fixCount` of the page in the i-th frame.
+- Every major function starts with null pointer checks.
+- Functions using page handles (pinPage) add unpin calls before early returns to avoid leaks.
+- `getRecord()` and `updateRecord()` contain boundary checks (offset + slotSize > PAGE_SIZE) to avoid segfaults.
 
-4. **getNumReadIO** : To get the total number of pages read from disk.
+### 2.4 Supporting Functions
 
-5. **getNumWriteIO** : To get the total number of pages written to disk.
-
-### 2.3 Other Modifications
-
-In addition to implementing the core buffer manager functionality, we introduced several small but necessary modifications to support the new replacement strategies and error handling:
-
-1. **New data structures**
-
-   i. **`Frame`**: Represents a single page frame in the buffer pool. We extended it with two additional fields:
-
-     * `ref` – an integer counter used for the LRU/LFU strategies.
-     * `refBit` – a reference bit used for the CLOCK strategy.
-
-   ii. **`PoolMgmtData`**: Stores management information for the buffer pool, including pointers to frames, counters for I/O operations, and helper pointers for replacement strategies .
-
-   iii. **`LRUKData`**: A dedicated structure to store access histories for the LRU-K strategy. It maintains a `histories` array for K timestamps per frame and a `historyCount` array to track how many accesses are recorded.
-
-   In addition, we defined a **global counter (`globalLRUCounter`)** that is incremented on every access, ensuring proper ordering of page references for both LRU and LRU-K.
-
-2. **New error codes**
-
-   `RC_PINNED_PAGES_IN_BUFFER (400)`: Returned when all frames are pinned, and no victim can be selected for replacement.
-
-   `RC_BUFFER_POOL_NOT_INIT (5)`: Returned when a buffer pool function is called without proper initialization.
-
-   These changes were necessary because the original error codes in `dberror.c` did not fully cover the specific cases in our buffer manager implementation.
-
-
-
-### 2.4 Additional Test Cases
-
-We also extended the test suite by adding a new test program (`test_assign2_n.c`). This test specifically validates the **CLOCK** and **LFU** replacement strategies, which were not covered in the original test cases. 
-
+1. **parseSchemaString** : Reconstructs `Schema` from serialized metadata.
+2. **serializeSchema** : Defined in rm_serializer.c. Generates the schema string for page 0. **TODOTODOTODOTODO**
+   
 ## 3. How to Build and Run
 
 ### Prerequisites
@@ -150,13 +123,13 @@ We also extended the test suite by adding a new test program (`test_assign2_n.c`
 
   Example of using WSL and running `make` inside WSL:  
 
-  ![Figure 6. make](./images/make.png)
+  !
 
 ### Build Instructions
 1. Open a terminal (Linux/macOS) or a WSL terminal (Windows).
 2. Navigate to the project directory:
    ```bash
-   cd CS525-F25-G02/assign2
+   cd CS525-F25-G02/assign3
    ```
 
 3. Run the following command to build the executable:
@@ -165,40 +138,21 @@ We also extended the test suite by adding a new test program (`test_assign2_n.c`
    make
    ```
 
-   This compiles the source files and generates the executable **`test_assign2_1`** ， **`test_assign2_2`** and **`test_assign2_n`**.
+   This compiles the source files and generates the executable **`test_assign3_1`**.
 
 ### Run Tests:
 Builds the project and executes the test cases.
 
 #### Using make
-1. Run the main test case (FIFO and LRU):
+Run the main test case:
    ```bash
-   make run1
-   ```
-2. Run the second test case (for optional strategies):
-   ```bash
-   make run2
-   ```
-3. Run the third test case (CLOCK and LFU strategies):
-   ```bash
-   make runn
+   make run
    ```
 #### Run executables directly
-
-1. Run test 1:
-
-   ```bash
-   ./test_assign2_1
-   ```
-2. Run test 2:
+Run test:
 
    ```bash
-   ./test_assign2_2
-   ```
-3. Run test n:
-
-   ```bash
-   ./test_assign2_n
+   ./test_assign3_1
    ```
 
 ### Additional Targets
@@ -209,9 +163,19 @@ Builds the project and executes the test cases.
   make clean
   ```
 
-  Removes all `.o` files and the compiled binary.
+## 4. Design Highlights and Improvements
 
-## 4. Demonstration of Execution
+1. **Safe Pin/Unpin Mechanism** – Every `pinPage()` has a matching `unpinPage()` even in error branches.
+
+2. **Record Tagging** – Each slot uses a 1-byte flag ('1' = valid, '0' = free).
+
+3. **Schema Serialization** – Schema is stored as a single string on page 0 and reconstructed with `strtok()`.
+
+4. **Full Test Compatibility** – All tests from `test_assign3_1.c` pass.
+
+5. **Robust Boundary Checks** – Prevent page overflow and leakage when invalid RID is given.
+
+## 5. Demonstration of Execution
 
 This section demonstrates how to build, run, and clean the project.  
 All commands are executed inside the project directory (`/CS525/CS525-F25-G02/assign2`) using WSL.
@@ -222,9 +186,9 @@ Before compiling, make sure you are inside the `assign2` folder of the repositor
 ```bash
 cd CS525/
 cd CS525-F25-G02/
-cd assign2
+cd assign3
 ```
-![Figure 1. Navigate into the `assign2` folder before building.](./images/navigate.png)
+!
 
 
 ### Step 2: Build the project with `make`
@@ -234,9 +198,9 @@ Run the following command to compile the source code:
 ```bash
 make
 ```
-This will build all object files (`.o`) and generate executables for the test cases (`test_assign2_1`, `test_assign2_2`, and `test_assign2_n`).
+This will build all object files (`.o`) and generate executables for the test cases (`test_assign3_1`).
 
-![Figure 2. Compiling the project using `make`.](./images/compile.png)
+!
 
 
 ### Step 3: Execute the test programs using the run targets
@@ -248,9 +212,7 @@ There are **two ways** to run the tests:
    The Makefile defines custom targets for running each test case:
 
    ```bash
-   make run1    # runs test_assign2_1
-   make run2    # runs test_assign2_2
-   make runn    # runs test_assign2_n
+   make run    # runs test_assign3_1
    ```
 
    <p align="left">
@@ -263,12 +225,10 @@ There are **two ways** to run the tests:
    You can also execute the compiled binaries directly:
 
    ```bash
-   ./test_assign2_1
-   ./test_assign2_2
-   ./test_assign2_n
+   ./test_assign3_1
    ```
 
-   ![Figure 4. Running tests directly via compiled executables.](./images/t.png)
+   !
 
 
 ### Step 4: Clean build files
@@ -280,13 +240,13 @@ make clean
 ```
 This deletes all object files and executables so you can rebuild from scratch.
 
-![Figure 5. Cleaning up build files with `make clean`.](./images/makeclean.png)
+!
 
 
 
 ## 5. Video Link
 
-  [The link to the recorded assignment 2 demo video. ](https://www.loom.com/share/28bb0049b54b4926a9f1225e6673a436?sid=7db313b1-befd-4d76-8420-152b394b19dd)
+  [The link to the recorded assignment 3 demo video. ](https://www.loom.com/share/)
 
 ## 6. Contact Authors
 
