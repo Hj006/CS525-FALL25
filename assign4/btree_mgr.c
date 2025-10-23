@@ -71,35 +71,146 @@ BTreeInternalNode *createInternalNode(int pageNum, int order) {
    Index Manager Initialization / Shutdown
 */
 RC initIndexManager (void *mgmtData) {
-    // TODO: initialize any global structures if needed
+    // initialize the storage manager
+    initStorageManager();
+
     return RC_OK;
 }
 
 RC shutdownIndexManager () {
-    // TODO: free any global resources if needed
+
     return RC_OK;
 }
 
 /* 
+
+Page Number Content
+0 Metadata page
+1 Root node page 
+2 Subsequent node pages
+
    Create / Open / Close / Delete B+ Tree
+
 */
 RC createBtree (char *idxId, DataType keyType, int n) {
     // TODO: create page file, initialize root node, store metadata
+    SM_FileHandle fh;
+    BM_BufferPool *bm = (BM_BufferPool *) malloc(sizeof(BM_BufferPool));
+    BM_PageHandle *page = (BM_PageHandle *) malloc(sizeof(BM_PageHandle));
+    RC rc;
+
+    // create new page file
+    rc = createPageFile(idxId);
+    if (rc != RC_OK) return rc;
+
+    rc = openPageFile(idxId, &fh);
+    if (rc != RC_OK) return rc;
+
+    // initialize buffer pool
+    rc = initBufferPool(bm, idxId, 10, RS_LRU, NULL);
+    if (rc != RC_OK) return rc;
+
+    // initialize meta data page
+    rc = pinPage(bm, page, 0);
+    if (rc != RC_OK) return rc;
+
+    // write info
+    char metadata[PAGE_SIZE];
+    memset(metadata, 0, PAGE_SIZE);
+    sprintf(metadata, "%d %d %d %d %d", 
+            keyType,   
+            n,         // order
+            1,         // rootPage 
+            1,         // numNodes 
+            0);        // numEntries 
+    memcpy(page->data, metadata, strlen(metadata) + 1);
+
+    markDirty(bm, page);
+    unpinPage(bm, page);
+    forceFlushPool(bm);
+
+    // empty root leaf page）
+    rc = pinPage(bm, page, 1);
+    if (rc != RC_OK) return rc;
+
+    BTreeLeafNode *root = createLeafNode(1, n);
+    memcpy(page->data, root, sizeof(BTreeLeafNode));
+
+    markDirty(bm, page);
+    unpinPage(bm, page);
+    forceFlushPool(bm);
+
+    // close
+    shutdownBufferPool(bm);
+    closePageFile(&fh);
+
+    free(bm);
+    free(page);
+    free(root);
+
+    printf("B+ tree '%s' created successfully.\n", idxId);
     return RC_OK;
 }
 
 RC openBtree (BTreeHandle **tree, char *idxId) {
-    // TODO: open existing B+ tree file and load metadata
+    BM_BufferPool *bm = (BM_BufferPool *) malloc(sizeof(BM_BufferPool));
+    BM_PageHandle *page = (BM_PageHandle *) malloc(sizeof(BM_PageHandle));
+    RC rc;
+
+    // initialize buffer pool
+    rc = initBufferPool(bm, idxId, 10, RS_LRU, NULL);
+    if (rc != RC_OK) return rc;
+
+    // read metadata page
+    rc = pinPage(bm, page, 0);
+    if (rc != RC_OK) return rc;
+
+    int keyType, order, rootPage, numNodes, numEntries;
+    sscanf(page->data, "%d %d %d %d %d", &keyType, &order, &rootPage, &numNodes, &numEntries);
+
+    // Constructing BTreeHandle and Management Structure
+    BTreeHandle *newTree = (BTreeHandle *) malloc(sizeof(BTreeHandle));
+    BTreeMgmtData *mgmtData = (BTreeMgmtData *) malloc(sizeof(BTreeMgmtData));
+
+    mgmtData->bm = bm;
+    mgmtData->page = page;
+    mgmtData->rootPage = rootPage;
+    mgmtData->numNodes = numNodes;
+    mgmtData->numEntries = numEntries;
+    mgmtData->order = order;
+
+    newTree->keyType = keyType;
+    newTree->idxId = idxId;
+    newTree->mgmtData = mgmtData;
+
+    *tree = newTree;
+
+    unpinPage(bm, page);
+    printf("B+ tree '%s' opened successfully.\n", idxId);
     return RC_OK;
 }
 
 RC closeBtree (BTreeHandle *tree) {
-    // TODO: flush dirty pages and close buffer pool
+    BTreeMgmtData *mgmt = (BTreeMgmtData *) tree->mgmtData;
+
+    forceFlushPool(mgmt->bm);
+    shutdownBufferPool(mgmt->bm);
+
+    free(mgmt->page);
+    free(mgmt->bm);
+    free(mgmt);
+    free(tree);
+
+    printf("B+ tree closed successfully.\n");
     return RC_OK;
 }
 
 RC deleteBtree (char *idxId) {
-    // TODO: destroy the page file corresponding to idxId
+    RC rc = destroyPageFile(idxId);
+    if (rc != RC_OK)
+        return rc;
+
+    printf("B+ tree '%s' deleted successfully.\n", idxId);
     return RC_OK;
 }
 
