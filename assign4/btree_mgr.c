@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 
 
@@ -45,14 +46,19 @@ typedef struct BTreeMgmtData {
     int numEntries;      // total num of key
     int order;           // order
 } BTreeMgmtData;
+typedef struct ScanMgmtData {
+    int currentPage;  
+    int keyIndex;     //  key index in the current leaf page
+    bool end;          // whether the scan has ended
+} ScanMgmtData;
 
 BTreeLeafNode *createLeafNode(int pageNum, int order) {
     BTreeLeafNode *leaf = (BTreeLeafNode *)malloc(sizeof(BTreeLeafNode));
     leaf->base.type = NODE_LEAF;
     leaf->base.numKeys = 0;
     leaf->base.pageNum = pageNum;
-    leaf->keys = (Value *)calloc(order, sizeof(Value));
-    leaf->rids = (RID *)calloc(order, sizeof(RID));
+    leaf->keys = calloc(order + 1, sizeof(Value));  //  +1 preventing out-of-bounds splitting
+    leaf->rids = calloc(order + 1, sizeof(RID));    // 
     leaf->nextLeaf = -1; // -1 means no sub node
     return leaf;
 }
@@ -62,8 +68,8 @@ BTreeInternalNode *createInternalNode(int pageNum, int order) {
     node->base.type = NODE_INTERNAL;
     node->base.numKeys = 0;
     node->base.pageNum = pageNum;
-    node->keys = (Value *)calloc(order, sizeof(Value));
-    node->children = (int *)calloc(order + 1, sizeof(int));
+    node->keys = calloc(order + 1, sizeof(Value));     //  +1
+    node->children = calloc(order + 2, sizeof(int));   //  +2 (the number of children is 1 more than the key)
     return node;
 }
 
@@ -72,6 +78,7 @@ BTreeInternalNode *createInternalNode(int pageNum, int order) {
 */
 RC initIndexManager (void *mgmtData) {
     // initialize the storage manager
+    (void)mgmtData;
     initStorageManager();
 
     return RC_OK;
@@ -133,8 +140,11 @@ RC createBtree (char *idxId, DataType keyType, int n) {
     rc = pinPage(bm, page, 1);
     if (rc != RC_OK) return rc;
 
-    BTreeLeafNode *root = createLeafNode(1, n);
-    memcpy(page->data, root, sizeof(BTreeLeafNode));
+    //BTreeLeafNode *root = createLeafNode(1, n);
+    //memcpy(page->data, root, sizeof(BTreeLeafNode));
+
+    memset(page->data, 0, PAGE_SIZE);  // clear 
+    printf("createBtree: bm=%p page=%p rootPage=%d\n", bm, page, 1);
 
     markDirty(bm, page);
     unpinPage(bm, page);
@@ -146,7 +156,7 @@ RC createBtree (char *idxId, DataType keyType, int n) {
 
     free(bm);
     free(page);
-    free(root);
+    //free(root);
 
     printf("B+ tree '%s' created successfully.\n", idxId);
     return RC_OK;
@@ -167,8 +177,10 @@ RC openBtree (BTreeHandle **tree, char *idxId) {
 
     int keyType, order, rootPage, numNodes, numEntries;
     sscanf(page->data, "%d %d %d %d %d", &keyType, &order, &rootPage, &numNodes, &numEntries);
+    
+    printf("openBtree: bm=%p page=%p rootPage(from file)=%d\n", bm, page, rootPage);
 
-    // Constructing BTreeHandle and Management Structure
+    // constructing BTreeHandle and Management Structure
     BTreeHandle *newTree = (BTreeHandle *) malloc(sizeof(BTreeHandle));
     BTreeMgmtData *mgmtData = (BTreeMgmtData *) malloc(sizeof(BTreeMgmtData));
 
@@ -182,6 +194,7 @@ RC openBtree (BTreeHandle **tree, char *idxId) {
     newTree->keyType = keyType;
     newTree->idxId = idxId;
     newTree->mgmtData = mgmtData;
+    printf("metadata content: '%s'\n", (char*)page->data);
 
     *tree = newTree;
 
@@ -218,17 +231,22 @@ RC deleteBtree (char *idxId) {
    3. Access Information About a B+ Tree
 */
 RC getNumNodes (BTreeHandle *tree, int *result) {
-    // TODO: return number of nodes in the tree
+    //  return number of nodes in the tree
+    BTreeMgmtData *mgmt = (BTreeMgmtData *) tree->mgmtData;
+    *result = mgmt->numNodes;
     return RC_OK;
 }
 
 RC getNumEntries (BTreeHandle *tree, int *result) {
-    // TODO: return number of key entries in the tree
+    //  return number of key entries in the tree
+    BTreeMgmtData *mgmt = (BTreeMgmtData *) tree->mgmtData;
+    *result = mgmt->numEntries;
     return RC_OK;
 }
 
 RC getKeyType (BTreeHandle *tree, DataType *result) {
-    // TODO: return key data type
+    //  return key data type
+    *result = tree->keyType;
     return RC_OK;
 }
 
