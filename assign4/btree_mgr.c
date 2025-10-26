@@ -285,3 +285,94 @@ RC closeTreeScan (BT_ScanHandle *handle) {
     // TODO: close and clean up scan structure
     return RC_OK;
 }
+
+#define INDENT_STEP 4
+
+//  auxiliary recursive function,
+static void printNode(BTreeHandle *tree, int pageNum, int depth, char *result) {
+    BTreeMgmtData *mgmt = (BTreeMgmtData *)tree->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+    BM_PageHandle ph;
+    int offset = 0;
+
+    pinPage(bm, &ph, pageNum);
+
+    NodeType type;
+    memcpy(&type, ph.data + offset, sizeof(NodeType));
+    offset += sizeof(NodeType);
+
+    // print indent
+    for (int i = 0; i < depth * INDENT_STEP; i++)
+        strcat(result, " ");
+
+    char buf[256];
+    if (type == NODE_LEAF) {
+        int numKeys, nextLeaf;
+        memcpy(&numKeys, ph.data + offset, sizeof(int)); offset += sizeof(int);
+        memcpy(&nextLeaf, ph.data + offset, sizeof(int)); offset += sizeof(int);
+
+        sprintf(buf, "LEAF(page=%d,next=%d): [", pageNum, nextLeaf);
+        strcat(result, buf);
+
+        for (int i = 0; i < numKeys; i++) {
+            int key;
+            RID rid;
+            memcpy(&key, ph.data + offset, sizeof(int));
+            offset += sizeof(int);
+            memcpy(&rid.page, ph.data + offset, sizeof(int));
+            offset += sizeof(int);
+            memcpy(&rid.slot, ph.data + offset, sizeof(int));
+            offset += sizeof(int);
+
+            sprintf(buf, "%d(rid=%d,%d)", key, rid.page, rid.slot);
+            strcat(result, buf);
+            if (i != numKeys - 1) strcat(result, ",");
+        }
+
+
+        strcat(result, "]\n");
+    } else {
+        int numKeys;
+        memcpy(&numKeys, ph.data + offset, sizeof(int)); offset += sizeof(int);
+        sprintf(buf, "INTERNAL(page=%d): [", pageNum);
+        strcat(result, buf);
+
+        int *keys = calloc(numKeys, sizeof(int));
+        for (int i = 0; i < numKeys; i++) {
+            memcpy(&keys[i], ph.data + offset, sizeof(int));
+            offset += sizeof(int);
+            sprintf(buf, "%d", keys[i]);
+            strcat(result, buf);
+            if (i != numKeys - 1) strcat(result, ",");
+        }
+        strcat(result, "]\n");
+
+        int *children = calloc(numKeys + 1, sizeof(int));
+        for (int i = 0; i <= numKeys; i++) {
+            memcpy(&children[i], ph.data + offset, sizeof(int));
+            offset += sizeof(int);
+        }
+
+        //  recursively print child nodes
+        for (int i = 0; i <= numKeys; i++) {
+            printNode(tree, children[i], depth + 1, result);
+        }
+
+        free(keys);
+        free(children);
+    }
+
+    unpinPage(bm, &ph);
+}
+
+// 
+char *printTree(BTreeHandle *tree) {
+    char *result = calloc(5000, sizeof(char));
+    strcpy(result, "=== B+ Tree Structure ===\n");
+    BTreeMgmtData *mgmt = (BTreeMgmtData *)tree->mgmtData;
+
+    printNode(tree, mgmt->rootPage, 0, result);
+    strcat(result, "==========================\n");
+
+    return result;
+}
