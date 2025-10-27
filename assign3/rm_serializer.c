@@ -117,6 +117,7 @@ serializeSchema(Schema *schema)
 
 	APPEND(result, "Schema with <%i> attributes (", schema->numAttr);
 
+
 	for(i = 0; i < schema->numAttr; i++)
 	{
 		APPEND(result,"%s%s: ", (i != 0) ? ", ": "", schema->attrNames[i]);
@@ -144,6 +145,7 @@ serializeSchema(Schema *schema)
 		APPEND(result, "%s%s", ((i != 0) ? ", ": ""), schema->attrNames[schema->keyAttrs[i]]);
 
 	APPEND_STRING(result,")\n");
+
 
 	RETURN_STRING(result);
 }

@@ -1,0 +1,561 @@
+#include "record_mgr.h"
+#include "buffer_mgr.h"
+#include "storage_mgr.h"
+#include "dberror.h"
+#include "tables.h"
+#include "expr.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// ----------------------------------------------------------------------
+// Management Data Structures
+// ----------------------------------------------------------------------
+typedef struct TableMgmtData {
+    BM_BufferPool *bm;
+    int numTuples;
+} TableMgmtData;
+
+typedef struct ScanMgmtData {
+    int currentPage;
+    int currentSlot;
+    Expr *cond;
+    BM_PageHandle ph;
+} ScanMgmtData;
+
+// ----------------------------------------------------------------------
+// Record Manager Initialization
+// ----------------------------------------------------------------------
+RC initRecordManager(void *mgmtData) {
+    return RC_OK;
+}
+
+RC shutdownRecordManager() {
+    return RC_OK;
+}
+
+// ----------------------------------------------------------------------
+// Table Operations
+// ----------------------------------------------------------------------
+RC createTable(char *name, Schema *schema) {
+    RC rc;
+
+    // create pagefile
+    rc = createPageFile(name);
+    if (rc != RC_OK)
+        return rc;
+
+    // initialize buffer pool
+    BM_BufferPool bm;
+    rc = initBufferPool(&bm, name, 3, RS_LRU, NULL);
+    if (rc != RC_OK)
+        return rc;
+
+    // write metadata to page 0
+    BM_PageHandle ph;
+    rc = pinPage(&bm, &ph, 0);
+    if (rc != RC_OK) {
+        shutdownBufferPool(&bm);
+        return rc;
+    }
+
+    int numTuples = 0;
+    int firstFreePage = -1;
+
+    memset(ph.data, 0, PAGE_SIZE);
+    sprintf(ph.data, "%d\n%d\n", numTuples, firstFreePage);
+
+    markDirty(&bm, &ph);
+    forcePage(&bm, &ph);
+    unpinPage(&bm, &ph);
+    forceFlushPool(&bm);
+    shutdownBufferPool(&bm);
+
+    return RC_OK;
+}
+
+RC openTable(RM_TableData *rel, char *name) {
+    BM_BufferPool *bm = malloc(sizeof(BM_BufferPool));
+    BM_PageHandle *ph = malloc(sizeof(BM_PageHandle));
+
+    RC rc = initBufferPool(bm, name, 3, RS_LRU, NULL);
+    if (rc != RC_OK) {
+        free(bm);
+        free(ph);
+        return rc;
+    }
+
+    rc = pinPage(bm, ph, 0);
+    if (rc != RC_OK) {
+        shutdownBufferPool(bm);
+        free(bm);
+        free(ph);
+        return rc;
+    }
+
+    // 读取 page 0 中的元数据
+    char *pageData = ph->data;
+    int numTuples = atoi(pageData);
+
+    // 跳过行 1
+    char *pos = strchr(pageData, '\n');
+    if (pos == NULL) return RC_FILE_NOT_FOUND;
+    pos++;
+
+    // 跳过行 2
+    pos = strchr(pos, '\n');
+    if (pos == NULL) return RC_FILE_NOT_FOUND;
+    pos++;
+
+    // 解析 schema（使用官方 rm_serializer.c 提供的 deserializeSchema）
+    Schema *schema = deserializeSchema(pos);
+    if (schema == NULL) {
+        printf("[openTable] deserializeSchema failed!\n");
+        return RC_RM_UNKOWN_DATATYPE;
+    }
+
+    unpinPage(bm, ph);
+    free(ph);
+
+    rel->name = strdup(name);
+    rel->schema = schema;
+
+    TableMgmtData *mgmt = malloc(sizeof(TableMgmtData));
+    mgmt->bm = bm;
+    mgmt->numTuples = numTuples;
+    rel->mgmtData = mgmt;
+
+    return RC_OK;
+}
+
+RC closeTable(RM_TableData *rel) {
+    if (rel == NULL || rel->mgmtData == NULL)
+        return RC_FILE_NOT_FOUND;
+
+    TableMgmtData *mgmt = (TableMgmtData *)rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+
+    forceFlushPool(bm);
+    shutdownBufferPool(bm);
+
+    free(bm);
+    free(mgmt);
+    rel->mgmtData = NULL;
+
+    return RC_OK;
+}
+
+RC deleteTable(char *name) {
+    return destroyPageFile(name);
+}
+
+int getNumTuples(RM_TableData *rel) {
+    TableMgmtData *mgmt = (TableMgmtData *)rel->mgmtData;
+    return mgmt->numTuples;
+}
+
+// ----------------------------------------------------------------------
+// Record Operations
+// ----------------------------------------------------------------------
+RC insertRecord(RM_TableData *rel, Record *record) {
+    TableMgmtData *mgmt = (TableMgmtData *)rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+    BM_PageHandle ph;
+
+    int recordSize = getRecordSize(rel->schema);
+    int slotSize = recordSize + 1;
+    int recordsPerPage = PAGE_SIZE / slotSize;
+
+    int pageNum = 1;
+    RC rc;
+
+    while (1) {
+        rc = pinPage(bm, &ph, pageNum);
+        if (rc != RC_OK) {
+            // create a new page if not exist
+            SM_FileHandle fh;
+            openPageFile(rel->name, &fh);
+            ensureCapacity(pageNum + 1, &fh);
+            closePageFile(&fh);
+            rc = pinPage(bm, &ph, pageNum);
+            if (rc != RC_OK)
+                return rc;
+            memset(ph.data, '0', PAGE_SIZE);
+            markDirty(bm, &ph);
+        }
+
+        bool found = false;
+        for (int i = 0; i < recordsPerPage; i++) {
+            int offset = i * slotSize;
+            if (ph.data[offset] == '0' || ph.data[offset] == '\0') {
+                ph.data[offset] = '1';
+                memcpy(ph.data + offset + 1, record->data, recordSize);
+                record->id.page = pageNum;
+                record->id.slot = i;
+                markDirty(bm, &ph);
+                unpinPage(bm, &ph);
+                mgmt->numTuples++;
+                found = true;
+                break;
+            }
+        }
+
+        if (found)
+            break;
+        unpinPage(bm, &ph);
+        pageNum++;
+    }
+
+    return RC_OK;
+}
+
+RC deleteRecord(RM_TableData *rel, RID id) {
+    TableMgmtData *mgmt = (TableMgmtData *)rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+    BM_PageHandle ph;
+
+    RC rc = pinPage(bm, &ph, id.page);
+    if (rc != RC_OK)
+        return rc;
+
+    int recordSize = getRecordSize(rel->schema);
+    int slotSize = recordSize + 1;
+    int offset = id.slot * slotSize;
+
+    ph.data[offset] = '0';
+    memset(ph.data + offset + 1, 0, recordSize);
+
+    markDirty(bm, &ph);
+    unpinPage(bm, &ph);
+
+    mgmt->numTuples--;
+
+    return RC_OK;
+}
+
+RC updateRecord(RM_TableData *rel, Record *record) {
+    TableMgmtData *mgmt = (TableMgmtData *)rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+    BM_PageHandle ph;
+
+    RC rc = pinPage(bm, &ph, record->id.page);
+    if (rc != RC_OK)
+        return rc;
+
+    int recordSize = getRecordSize(rel->schema);
+    int slotSize = recordSize + 1;
+    int offset = record->id.slot * slotSize;
+
+    ph.data[offset] = '1';
+    memcpy(ph.data + offset + 1, record->data, recordSize);
+
+    markDirty(bm, &ph);
+    unpinPage(bm, &ph);
+
+    return RC_OK;
+}
+
+RC getRecord(RM_TableData *rel, RID id, Record *record) {
+    TableMgmtData *mgmt = (TableMgmtData *)rel->mgmtData;
+    BM_BufferPool *bm = mgmt->bm;
+    BM_PageHandle ph;
+
+    RC rc = pinPage(bm, &ph, id.page);
+    if (rc != RC_OK)
+        return rc;
+
+    int recordSize = getRecordSize(rel->schema);
+    int slotSize = recordSize + 1;
+    int offset = id.slot * slotSize;
+
+    if (offset + slotSize > PAGE_SIZE) {
+        unpinPage(bm, &ph);
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+
+    if (ph.data[offset] != '1') {
+        unpinPage(bm, &ph);
+        return RC_READ_NON_EXISTING_PAGE;
+    }
+
+    memcpy(record->data, ph.data + offset + 1, recordSize);
+    record->id = id;
+
+    unpinPage(bm, &ph);
+    return RC_OK;
+}
+
+// ----------------------------------------------------------------------
+// Scanning Operations
+// ----------------------------------------------------------------------
+RC startScan(RM_TableData *rel, RM_ScanHandle *scan, Expr *cond) {
+    if (rel == NULL || rel->mgmtData == NULL)
+        return RC_RM_UNKOWN_DATATYPE;
+
+    ScanMgmtData *scanData = malloc(sizeof(ScanMgmtData));
+    scanData->currentPage = 1;
+    scanData->currentSlot = 0;
+    scanData->cond = cond;
+    scanData->ph.pageNum = -1;
+    scanData->ph.data = NULL;
+    scan->rel = rel;
+    scan->mgmtData = scanData;
+
+    return RC_OK;
+}
+
+RC next(RM_ScanHandle *scan, Record *record) {
+    if (scan == NULL || scan->rel == NULL || scan->mgmtData == NULL)
+        return RC_FILE_NOT_FOUND;
+
+    RM_TableData *rel = scan->rel;
+    TableMgmtData *tableMgmt = (TableMgmtData *)rel->mgmtData;
+    BM_BufferPool *bm = tableMgmt->bm;
+    Schema *schema = rel->schema;
+    ScanMgmtData *scanData = (ScanMgmtData *)scan->mgmtData;
+
+    int recordSize = getRecordSize(schema);
+    int slotSize = recordSize + 1;
+    int recordsPerPage = PAGE_SIZE / slotSize;
+    Value *result = NULL;
+    RC rc;
+
+    int totalPages = (tableMgmt->numTuples + recordsPerPage - 1) / recordsPerPage;
+    if (totalPages == 0)
+        totalPages = 1;
+
+    while (scanData->currentPage <= totalPages) {
+        rc = pinPage(bm, &scanData->ph, scanData->currentPage);
+        if (rc != RC_OK)
+            return rc;
+
+        char *data = scanData->ph.data;
+
+        for (; scanData->currentSlot < recordsPerPage; scanData->currentSlot++) {
+            int offset = scanData->currentSlot * slotSize;
+            if (data[offset] != '1')
+                continue;
+
+            record->id.page = scanData->currentPage;
+            record->id.slot = scanData->currentSlot;
+            memcpy(record->data, data + offset + 1, recordSize);
+
+            if (scanData->cond == NULL) {
+                scanData->currentSlot++;
+                unpinPage(bm, &scanData->ph);
+                return RC_OK;
+            }
+
+            rc = evalExpr(record, schema, scanData->cond, &result);
+            if (rc == RC_OK && result != NULL && result->v.boolV == TRUE) {
+                freeVal(result);
+                scanData->currentSlot++;
+                unpinPage(bm, &scanData->ph);
+                return RC_OK;
+            }
+            if (result != NULL)
+                freeVal(result);
+        }
+
+        unpinPage(bm, &scanData->ph);
+        scanData->currentPage++;
+        scanData->currentSlot = 0;
+    }
+
+    return RC_RM_NO_MORE_TUPLES;
+}
+
+RC closeScan(RM_ScanHandle *scan) {
+    if (scan == NULL || scan->mgmtData == NULL)
+        return RC_OK;
+
+    ScanMgmtData *scanData = (ScanMgmtData *)scan->mgmtData;
+    TableMgmtData *tableMgmt = (TableMgmtData *)scan->rel->mgmtData;
+
+    if (scanData->ph.data != NULL)
+        unpinPage(tableMgmt->bm, &scanData->ph);
+
+    free(scanData);
+    scan->mgmtData = NULL;
+    return RC_OK;
+}
+
+// ----------------------------------------------------------------------
+// Schema Helpers
+// ----------------------------------------------------------------------
+int getRecordSize(Schema *schema) {
+    if (schema == NULL || schema->dataTypes == NULL || schema->typeLength == NULL)
+        return 0;
+
+    int size = 0;
+    for (int i = 0; i < schema->numAttr; i++) {
+        switch (schema->dataTypes[i]) {
+        case DT_INT:
+            size += sizeof(int);
+            break;
+        case DT_FLOAT:
+            size += sizeof(float);
+            break;
+        case DT_BOOL:
+            size += sizeof(bool);
+            break;
+        case DT_STRING:
+            size += schema->typeLength[i];
+            break;
+        }
+    }
+    return size;
+}
+
+Schema *createSchema(int numAttr, char **attrNames, DataType *dataTypes,
+                     int *typeLength, int keySize, int *keys) {
+    if (numAttr <= 0 || attrNames == NULL || dataTypes == NULL || typeLength == NULL)
+        return NULL;
+
+    Schema *schema = malloc(sizeof(Schema));
+    schema->numAttr = numAttr;
+    schema->attrNames = malloc(sizeof(char *) * numAttr);
+
+    for (int i = 0; i < numAttr; i++) {
+        schema->attrNames[i] = malloc(strlen(attrNames[i]) + 1);
+        strcpy(schema->attrNames[i], attrNames[i]);
+    }
+
+    schema->dataTypes = malloc(sizeof(DataType) * numAttr);
+    memcpy(schema->dataTypes, dataTypes, sizeof(DataType) * numAttr);
+
+    schema->typeLength = malloc(sizeof(int) * numAttr);
+    memcpy(schema->typeLength, typeLength, sizeof(int) * numAttr);
+
+    schema->keySize = keySize;
+    schema->keyAttrs = (keySize > 0) ? malloc(sizeof(int) * keySize) : NULL;
+    if (keySize > 0)
+        memcpy(schema->keyAttrs, keys, sizeof(int) * keySize);
+
+    return schema;
+}
+
+RC freeSchema(Schema *schema) {
+    if (schema == NULL)
+        return RC_OK;
+    for (int i = 0; i < schema->numAttr; i++)
+        free(schema->attrNames[i]);
+    free(schema->attrNames);
+    free(schema->dataTypes);
+    free(schema->typeLength);
+    free(schema->keyAttrs);
+    free(schema);
+    return RC_OK;
+}
+
+// ----------------------------------------------------------------------
+// Record & Attribute Helpers
+// ----------------------------------------------------------------------
+RC createRecord(Record **record, Schema *schema) {
+    *record = malloc(sizeof(Record));
+    int size = getRecordSize(schema);
+    (*record)->data = calloc(1, size);
+    (*record)->id.page = -1;
+    (*record)->id.slot = -1;
+    return RC_OK;
+}
+
+RC freeRecord(Record *record) {
+    if (record == NULL)
+        return RC_OK;
+    free(record->data);
+    free(record);
+    return RC_OK;
+}
+
+RC getAttr(Record *record, Schema *schema, int attrNum, Value **value) {
+    if (record == NULL || record->data == NULL || schema == NULL)
+        return RC_FILE_NOT_FOUND;
+    if (attrNum < 0 || attrNum >= schema->numAttr)
+        return RC_RM_UNKOWN_DATATYPE;
+
+    int offset = 0;
+    char *data = record->data;
+
+    for (int i = 0; i < attrNum; i++) {
+        switch (schema->dataTypes[i]) {
+        case DT_INT: offset += sizeof(int); break;
+        case DT_FLOAT: offset += sizeof(float); break;
+        case DT_BOOL: offset += sizeof(bool); break;
+        case DT_STRING: offset += schema->typeLength[i]; break;
+        }
+    }
+
+    data += offset;
+
+    switch (schema->dataTypes[attrNum]) {
+    case DT_INT: {
+        int val;
+        memcpy(&val, data, sizeof(int));
+        MAKE_VALUE(*value, DT_INT, val);
+        break;
+    }
+    case DT_FLOAT: {
+        float val;
+        memcpy(&val, data, sizeof(float));
+        MAKE_VALUE(*value, DT_FLOAT, val);
+        break;
+    }
+    case DT_BOOL: {
+        bool val;
+        memcpy(&val, data, sizeof(bool));
+        MAKE_VALUE(*value, DT_BOOL, val);
+        break;
+    }
+    case DT_STRING: {
+        char *buf = malloc(schema->typeLength[attrNum] + 1);
+        memset(buf, 0, schema->typeLength[attrNum] + 1);
+        strncpy(buf, data, schema->typeLength[attrNum]);
+        buf[schema->typeLength[attrNum]] = '\0';
+        MAKE_STRING_VALUE(*value, buf);
+        free(buf);
+        break;
+    }
+    }
+    return RC_OK;
+}
+
+RC setAttr(Record *record, Schema *schema, int attrNum, Value *value) {
+    if (attrNum >= schema->numAttr)
+        return RC_RM_UNKOWN_DATATYPE;
+
+    int offset = 0;
+    char *data = record->data;
+
+    for (int i = 0; i < attrNum; i++) {
+        switch (schema->dataTypes[i]) {
+        case DT_INT: offset += sizeof(int); break;
+        case DT_FLOAT: offset += sizeof(float); break;
+        case DT_BOOL: offset += sizeof(bool); break;
+        case DT_STRING: offset += schema->typeLength[i]; break;
+        }
+    }
+
+    data += offset;
+
+    switch (schema->dataTypes[attrNum]) {
+    case DT_INT:
+        memcpy(data, &(value->v.intV), sizeof(int));
+        break;
+    case DT_FLOAT:
+        memcpy(data, &(value->v.floatV), sizeof(float));
+        break;
+    case DT_BOOL:
+        memcpy(data, &(value->v.boolV), sizeof(bool));
+        break;
+    case DT_STRING:
+        memset(data, 0, schema->typeLength[attrNum] + 1);
+        if (value->v.stringV != NULL) {
+            strncpy(data, value->v.stringV, schema->typeLength[attrNum]);
+            data[schema->typeLength[attrNum]] = '\0';
+        }
+    }
+
+    return RC_OK;
+}

@@ -73,13 +73,14 @@ testInsertAndFind (void)
   // insert keys
   for(i = 0; i < numInserts; i++)
     TEST_CHECK(insertKey(tree, keys[i], insert[i]));
+  printf("%s", printTree(tree));
 
   // check index stats
   TEST_CHECK(getNumNodes(tree, &testint));
   ASSERT_EQUALS_INT(testint,4, "number of nodes in btree");
   TEST_CHECK(getNumEntries(tree, &testint));
   ASSERT_EQUALS_INT(testint, numInserts, "number of entries in btree");
-
+  
   // search for keys
   for(i = 0; i < 1000; i++)
     {
